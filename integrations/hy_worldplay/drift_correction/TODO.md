@@ -25,7 +25,7 @@ metrics logged in `OWNER_FEEDBACK.md` and `outputs/*/scores.json`.
 
 | issue | solution | status |
 |---|---|---|
-| **Repeat prior**: loop-trained corrector doesn't follow forward trajectories (advance-score 0.38 vs base 0.58; stuck/repeats, hallucinated objects); gate/gain can't fix (in weights) | Mixed-geometry pairs (legs 3/4/5 break the fixed revisit lag) + trust-region `FID_W ∈ {0.3,0.1,1.0}` (drift-gap-normalized, warmed up) | v4 arms queued |
+| **Repeat prior**: loop-trained corrector doesn't follow forward trajectories (sim-to-start ~0.62 vs base ~0.42 vs reference-host scale SF 0.17 / av2s 0.50; stuck/repeats); gate/gain can't fix (in weights). Appearing people/objects = the known scene-reset scoping (see `drift_correction/TODO_progression_bias.md`), not corrector-induced | Mixed-geometry pairs (legs 3/4/5 break the fixed revisit lag) + trust-region `FID_W ∈ {0.3,0.1,1.0}` (drift-gap-normalized, warmed up) | v4 arms queued |
 | **Contraction stickiness**: progressive motion decay (dyn 20→9); owner cross-host: contraction kills progression even without loops | Contraction OFF in v4; v3 (CW .25) vs v3b (CW 0) gives this host's ablation row | v3/v3b tonight |
 | **Saturation overshoot** (v2 sat-drift 0.070 vs base 0.045; v1↔v2 DAgger oscillation) | Round-2 DAgger pool (v3+) + verify in grid; stat-matching term only if it persists | in grid |
 | Revisit-memory "2.4×" claim inflated by repeat prior | Retracted; re-report only for checkpoints with advance-score ≈ base | in writeup |

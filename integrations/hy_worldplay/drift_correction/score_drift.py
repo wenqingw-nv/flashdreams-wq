@@ -74,21 +74,29 @@ def sharpness_curve(frames: np.ndarray) -> list[float]:
     return out
 
 
-def advance_score(frames: np.ndarray) -> float:
-    """1 - mean late-half frame-correlation to frame 0.
+def sim_to_start(frames: np.ndarray) -> float:
+    """Mean last-20% frame-correlation to the first-2s mean frame.
 
-    On a forward trajectory the view should decorrelate from the start;
-    a corrector with a learned repeat prior plateaus instead (observed:
-    base 0.58 vs loop-trained corrector 0.38 on the bridge cells)."""
+    The reference repo's progression-bias probe (its
+    ``TODO_progression_bias.md`` convention, cross-host comparable scale:
+    SF 0.17 / av1s 0.20 / av2s 0.50). Lower = healthy progression, but
+    near-zero can be collapse — read alongside the quality guards. On a
+    forward trajectory the view should decorrelate from the start; a
+    corrector with a learned repeat prior plateaus high instead."""
     g = frames.astype(np.float32).mean(axis=-1)[:, ::4, ::4]
-    f0 = g[0] - g[0].mean()
+    n2s = max(1, min(len(g), 3))  # first ~2s at the chunk-stride sampling
+    anchor = g[:n2s].mean(axis=0)
+    anchor = anchor - anchor.mean()
     sims = []
-    for f in g[len(g) // 2 :]:
+    for f in g[-max(1, len(g) // 5) :]:
         fc = f - f.mean()
         sims.append(
-            float((f0 * fc).sum() / (np.linalg.norm(f0) * np.linalg.norm(fc) + 1e-8))
+            float(
+                (anchor * fc).sum()
+                / (np.linalg.norm(anchor) * np.linalg.norm(fc) + 1e-8)
+            )
         )
-    return float(1 - np.mean(sims))
+    return float(np.mean(sims))
 
 
 def sat_drift(frames: np.ndarray) -> float:
@@ -158,7 +166,7 @@ def main() -> None:
                 "dynamic_degree": dyn,
                 "sharpness_ratio": sharp_ratio,
                 "sat_drift": sat_drift(frames),
-                "advance_score": advance_score(frames),
+                "sim_to_start": sim_to_start(frames),
                 "curve": curve,
                 "sharpness": sharp,
             }
@@ -177,7 +185,7 @@ def main() -> None:
                 "dynamic_degree",
                 "sharpness_ratio",
                 "sat_drift",
-                "advance_score",
+                "sim_to_start",
             )
         }
         results[config] = {"videos": per_video, "aggregate": agg}
@@ -186,7 +194,7 @@ def main() -> None:
     print("\n================ closed-loop drift eval ================")
     print(
         f"{'':10s} {'MUSIQ':>7s} {'late':>7s} {'Delta':>7s} {'dyn':>6s} "
-        f"{'sharp':>6s} {'sat':>7s} {'adv':>5s}"
+        f"{'sharp':>6s} {'sat':>7s} {'sim':>5s}"
     )
     for name in configs:
         a = results[name]["aggregate"]
@@ -194,7 +202,7 @@ def main() -> None:
             f"{name:10s} {a['musiq_overall']:7.2f} {a['musiq_late']:7.2f} "
             f"{a['delta_drift']:+7.2f} {a['dynamic_degree']:6.1f} "
             f"{a['sharpness_ratio']:6.2f} {a['sat_drift']:7.4f} "
-            f"{a['advance_score']:5.2f}"
+            f"{a['sim_to_start']:5.2f}"
         )
     b = results.get("base", {}).get("aggregate")
     for name in configs:
