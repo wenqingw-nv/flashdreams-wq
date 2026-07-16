@@ -70,6 +70,11 @@ systematic the drift-induced error actually is at each timestep."""
 N_IMAGES = int(os.environ.get("N_IMAGES", "0"))
 """Cap on held-out images (0 = all); finals trade breadth for horizon."""
 
+PROMPT = os.environ.get("PROMPT", "")
+"""Text-prompt override. The integration default ("ancient Athens") is
+mismatched to most seed images and tugs content toward off-scene
+structures/figures; pass a scene-matched or neutral prompt for evals."""
+
 OUT_DIR = Path(os.environ.get("EVAL_OUT", str(_BASE / "outputs/eval")))
 
 
@@ -119,6 +124,8 @@ def main() -> None:
                             network = network._orig_mod
                         apply_lora(network)
                         load_lora(network, LORA)
+                        if PROMPT:
+                            runner.config.prompt = PROMPT
 
                         # Per-step gate hook: rescale the LoRA before every
                         # denoise step to that step's alpha*. Per-token

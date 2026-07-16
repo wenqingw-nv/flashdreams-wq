@@ -70,6 +70,15 @@ IMAGES_DIR = os.environ.get("IMAGES_DIR", "")
 """Directory of first-frame images; empty -> the upstream sample image for
 every clip (seed/pattern variety only)."""
 
+PROMPTS_FILE = os.environ.get(
+    "PROMPTS_FILE",
+    "/localhome/local-wenqingw/projs/Self-Forcing/prompts/MovieGenVideoBench_extended.txt",
+)
+"""Prompt source for seed-image-matched text conditioning:
+``frame_NNNN.png`` seeds (from ``gen_first_frames.py``) roll with line
+``NNNN`` of this file instead of the integration's mismatched default
+prompt. Other image names keep the default."""
+
 CORRECTOR_LORA = os.environ.get("CORRECTOR_LORA", "")
 """Optional LoRA checkpoint; when set, rollouts run with the corrector
 merged in at scale 1 (the DAgger round: pairs reflect the states the
@@ -98,6 +107,22 @@ def loop_pose(pattern: str, leg: int, num_laps: int) -> str:
     assert int(n) == leg
     laps[-1] = f"{head}-{leg - 1}" if leg > 1 else ", ".join(lap.split(", ")[:-1])
     return ", ".join(laps)
+
+
+def matched_prompt(image_path: Path | None) -> str | None:
+    """Return the prompt that generated ``frame_NNNN.png``, else ``None``."""
+    if image_path is None or not image_path.stem.startswith("frame_"):
+        return None
+    try:
+        idx = int(image_path.stem.split("_")[1])
+        lines = [
+            ln.strip()
+            for ln in Path(PROMPTS_FILE).read_text().splitlines()
+            if ln.strip()
+        ]
+        return lines[idx]
+    except (ValueError, IndexError, OSError):
+        return None
 
 
 def main() -> None:
@@ -149,6 +174,9 @@ def main() -> None:
             runner.config.num_chunk = num_chunk
             if image_path is not None:
                 runner.config.image_path = image_path
+        prompt = matched_prompt(image_path)
+        if prompt:
+            runner.config.prompt = prompt
         seed = _BASE_SEED + i
         print(f"clip {i:04d}: pose[{pattern}] seed={seed} ...", flush=True)
         snaps = capture_rollout(runner, noise_seed=seed)
