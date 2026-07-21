@@ -16,16 +16,29 @@ desynced view (deterministic seam metrics differ between it and a real-view pass
 videos: 1.188 vs 1.249), so a real-view re-score of eval_sweep is queued; bridge conclusions are
 provisional until it lands. Seam metric fix (true cadence 13+16k) is code-level and stands.
 
-**RETRACTION (2026-07-21):** the static-suite table and the v3-re-eval closure previously recorded
-here were read through a desynced agent filesystem view; neither scores.json existed on disk.
-Real state: static suite corrgate/corrgate050 cells GENERATING now (base + corr050 done); v3
-rollouts + sbs are on disk but unscored. Verified numbers replace this note when scoring lands.
+**Static-background suite — VERIFIED table (2026-07-21, scores.json 13:17 on disk; supersedes the
+retracted phantom table, which was wrong in every number):**
+
+| config | MUSIQ/late | Δ-drift | dyn (×base) | sat | cuts | latesim | seam-mot | seam-sharp |
+|---|---|---|---|---|---|---|---|---|
+| base | 53.2/56.3 | −5.97 | 12.8 (1.00) | 0.054 | 0.25 | 0.618 | 1.251 | 0.979 |
+| corr050 | 47.9/45.6 | −0.64 | 19.6 (2.18, erratic) | 0.028 | 0 | 0.718 | 1.607 | 0.885 |
+| corrgate | 51.4/52.4 | −3.10 | 6.2 (0.59) | 0.029 | 0 | 0.841 | 1.643 | 0.952 |
+| **corrgate050** | 50.0/51.5 | −3.89 | 8.9 (0.87) | 0.024 | 0 | 0.818 | 1.362 | 0.980 |
+
+Read: corrgate050 is the only corrector config near the motion guard (−13%) with sharpness ≈ base
+and the mildest pulse; the stronger anchoring (latesim 0.82 vs base 0.62) is the desired behavior
+on static scenes. Flags for the owner eyeball: (1) corrector configs sit below base MUSIQ here
+(base Δ −5.97 — the base *improves* over these rollouts, unlike the bridge cells); (2) scene5
+motion collapses under every corrector (0.06–0.16×); (3) corr050 is erratic on static scenes
+(per-scene dyn 0.16–6.7×). Entrance scene7: corrgate050 dyn 0.86× base, seam 1.096 (best config),
++4.9 MUSIQ. Artifacts: `outputs/demo_static/{scores.json,sbs_*.mp4}`.
 
 ## Now
 
-1. Static suite: wait out the live generation (do not restart), then score
-   {base, corr050, corrgate, corrgate050}, build sbs for all 8 scenes, re-issue the table verified.
-2. Score `eval_v3` (rollouts on disk) and re-issue the v2-vs-v3 verdict verified.
+1. **Owner eyeball on the static-suite sbs** (`outputs/demo_static/sbs_*scene{0..7}*`), with the
+   three flags above called out (esp. scene5 motion collapse + scene7 entrance).
+2. v3 + eval_sweep real-view re-scores in flight; v2-vs-v3 verdict re-issues when v3 lands.
 3. **Bridge OWNER EYEBALL: PASS (2026-07-21)** — corrgate050 "much better in progression, without
    much pulling back or pulse issue" (both sbs comparisons). Confirmed for commanded motion; −23%
    dynamics accepted; gate×{0.55–0.7} knee sweep NOT NEEDED unless the static suite objects.

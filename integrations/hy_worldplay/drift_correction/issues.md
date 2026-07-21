@@ -17,7 +17,8 @@ git history, not on this board.
 | 3 | **v2 saturation overshoot** — sat-drift 0.070 vs base 0.045 (v1↔v2 DAgger oscillation) | v3 re-eval rollouts + sbs on disk (`eval_v3/`); the earlier "closed, v2 wins" numbers are RETRACTED (read through a phantom view — no scores.json existed); scoring queued | reopened pending verified score | eval_v3 scoring | with static-suite scoring |
 | 4 | **Host-level jump-cut at chunk boundaries** — content-level context/memory handoff artifact, present in the base; NOT the corrector's pulse (#2) and not corrector-fixable | fix class: content-level overlap/blend in the runner | parked (host-level, out of corrector scope) | — | post-refresh |
 
-Acceptance demo (not an issue): static-background suite — previously posted "DONE" table RETRACTED
-(phantom-view read; no scores.json on disk). Real state: base + corr050 cells on disk, corrgate +
-corrgate050 generating now; scoring + sbs + verified table follow. Owner eyeball decides ship config
-per use case.
+Acceptance demo (not an issue): static-background suite **scored on real disk (2026-07-21 13:17)** —
+verified table in `TODO.md`. corrgate050 = best corrector config on instruments (dyn 0.87× base,
+sharpness ≈ base, mildest pulse, entrance preserved at 0.86×); flags: corrector MUSIQ below base on
+these scenes, scene5 motion collapse (all configs), corr050 erratic. Owner eyeball on
+`demo_static/sbs_*` decides ship config per use case.
