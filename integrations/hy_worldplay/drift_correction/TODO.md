@@ -10,10 +10,11 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Where we are
 
-**Deploy candidate: `corrgate050` (α*(t) gate × 0.5 gain) — passed the BRIDGE kill bar on
-instruments** (verified on disk, `eval_sweep/scores.json`): best progression of any corrector
-config (latesim 0.741), seams < corr050, post-boundary sharpness ≈ base, Δ-drift −0.15, MUSIQ 72.3.
-Seam metric fixed (true cadence 13+16k; pre-fix seam numbers not comparable).
+**Deploy candidate: `corrgate050` (α*(t) gate × 0.5 gain) — passed the BRIDGE kill bar per
+`eval_sweep/scores.json`, now UNDER RE-VERIFICATION:** the file is on disk but was computed in the
+desynced view (deterministic seam metrics differ between it and a real-view pass on identical base
+videos: 1.188 vs 1.249), so a real-view re-score of eval_sweep is queued; bridge conclusions are
+provisional until it lands. Seam metric fix (true cadence 13+16k) is code-level and stands.
 
 **RETRACTION (2026-07-21):** the static-suite table and the v3-re-eval closure previously recorded
 here were read through a desynced agent filesystem view; neither scores.json existed on disk.
