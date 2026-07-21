@@ -33,7 +33,7 @@ from pathlib import Path
 
 import torch
 
-from _rollout import build_runner, capture_rollout
+from _rollout import build_runner, capture_rollout, install_alpha_gate
 
 ## Eval configuration
 
@@ -61,12 +61,6 @@ SEEDS = tuple(
 )
 """Diffusion seeds; every (pose, image, seed) cell runs in every config."""
 
-GATE_ALPHA = {1000.0: 0.81, 960.0: 0.53, 888.8889: 0.53, 727.2728: 0.58}
-"""Unbiased alpha*(t) from the faithful step-0 gate
-(``outputs/gate/gate_faithful.json``): per-step correction gain applied by
-the ``corrgate`` config (``TGATE=1``). Correction strength follows how
-systematic the drift-induced error actually is at each timestep."""
-
 N_IMAGES = int(os.environ.get("N_IMAGES", "0"))
 """Cap on held-out images (0 = all); finals trade breadth for horizon."""
 
@@ -90,13 +84,21 @@ def main() -> None:
 
     # Config name -> deployed LoRA gain. ``GAINS=0.7,0.85`` adds partial-gain
     # rows (named ``corr070`` etc.); ``TGATE=1`` adds the per-step
-    # alpha*(t)-gated row.
-    configs: dict[str, float | str] = {"base": 0.0, "corr": 1.0}
+    # alpha*(t)-gated row, ``TGATE=1,0.5`` also the gate x 0.5 composition
+    # (``corrgate050``).
+    configs: dict[str, float | tuple[str, float]] = {"base": 0.0, "corr": 1.0}
     for g in os.environ.get("GAINS", "").split(","):
         if g.strip():
             configs[f"corr{float(g):.2f}".replace(".", "")] = float(g)
-    if os.environ.get("TGATE", ""):
-        configs["corrgate"] = "gate"
+    for s in os.environ.get("TGATE", "").split(","):
+        if s.strip():
+            scale = float(s)
+            name = (
+                "corrgate"
+                if scale == 1.0
+                else f"corrgate{scale:.2f}".replace(".", "")
+            )
+            configs[name] = ("gate", scale)
 
     runner = None
     network = None
@@ -126,26 +128,7 @@ def main() -> None:
                         load_lora(network, LORA)
                         if PROMPT:
                             runner.config.prompt = PROMPT
-
-                        # Per-step gate hook: rescale the LoRA before every
-                        # denoise step to that step's alpha*. Per-token
-                        # timesteps (AR0) include the first-frame
-                        # stabilization value; the max is always the
-                        # scheduler step.
-                        transformer = runner.pipeline.diffusion_model.transformer
-                        orig_pf = transformer.predict_flow
-
-                        def gated_pf(*args, _net=network, **kwargs):
-                            if mode["gain"] == "gate":
-                                t = float(kwargs["timestep"].reshape(-1).max())
-                                alpha = min(
-                                    GATE_ALPHA.items(),
-                                    key=lambda kv: abs(kv[0] - t),
-                                )[1]
-                                set_lora_scale(_net, alpha)
-                            return orig_pf(*args, **kwargs)
-
-                        transformer.predict_flow = gated_pf
+                        install_alpha_gate(runner, network, mode)
                     else:
                         runner.config.pose = pose
                         if image_path is not None:
@@ -153,7 +136,7 @@ def main() -> None:
                     from _lora import set_lora_scale
 
                     mode["gain"] = gain
-                    if gain != "gate":
+                    if not isinstance(gain, tuple):
                         set_lora_scale(network, gain)
                     print(f"{config}/{name}: rolling {NUM_CHUNK} chunks ...", flush=True)
                     capture_rollout(runner, noise_seed=seed, mp4_path=mp4)

@@ -58,3 +58,51 @@ bonus row. q/k-only arm queued only if the grid finishes with margin, per your c
 **Instruction 3 — acknowledged.** v4 is final; pass bar = advance_score ≈ base at ≥ baseline quality
 (plus the standing Δ/dyn/sat/sharp guards). Otherwise: deploy-config recommendation from the grid +
 failure analysis (loop-teacher bias + contraction stickiness as mechanisms) as the deliverable.
+
+---
+
+## Owner addendum (2026-07-16) — machine limits after the CPU lockup
+
+Admin root-caused last night's freeze: CPU soft lockups from concurrent-job overload (no OOM). Standing
+rules for this box, effective now: **total ≤3 concurrent heavy jobs across ALL agents** (GPU generation,
+training, and CPU-heavy video-decode scoring all count), and prefix every job with
+`OMP_NUM_THREADS=8 MKL_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8`. Two slots are occupied by my sfc resume +
+T11 retrain until ~tomorrow morning — schedule your v4 chain as the third slot, one arm at a time, and
+stagger any decode-heavy scoring behind the training arms.
+
+## Owner (2026-07-16) — v4 ON HOLD
+
+Priority call: the progression-bias fix runs on the paper host (Wan2.1-1.3B) FIRST — its diagnostics and
+contraction/reference conclusions will de-risk your v4 design anyway. Do not launch v4 or other GPU/decode
+jobs until I post the go-ahead here. Use the time for the writeup: metric definitions, the v1-blur→v2 story,
+the retraction note, and the deploy-config recommendation draft from the morning grid.
+
+## Owner (2026-07-17) — mandatory launcher after 2nd incident
+
+A second freeze occurred (UVM driver wedge, single job running — not overload). Box was rebooted.
+**Effective now: launch ALL GPU/decode jobs through `~/projs/drift_correction/scripts/safe_run.sh <cmd>`**
+— it enforces a driver health probe, a 2-slot box-wide concurrency lock (/tmp/gpu_slots), thread caps,
+CPU quota, and the non-VMM torch allocator (`backend:native` — do NOT set expandable_segments). This
+applies to your v4 chain when it gets the go-ahead.
+
+## Owner (2026-07-17) — MACHINE IN MAINTENANCE MODE
+
+Driver bug report filed; box is in maintenance (may be power-cycled/re-imaged anytime). **Launch NOTHING
+until further notice.** All v4 work stays writing-only. Will post here when hardware returns.
+
+## Owner eyeball (2026-07-21) — gain-sweep first verdicts
+
+On the fresh sweep rollouts (`outputs/eval_sweep`): **corr050 reaches the bridge** (progression
+preserved) **with better color saturation than base**; small pulses remain but without much image-quality
+degradation. The **gated config anchors — does not reach the bridge** (consistent with its latesim 0.86 vs
+base 0.67). Corrector-induced chunk-cadence pulse diagnosed and measured (corr seam-motion ratio
+0.92–0.96 vs base ~1.0; mechanism = per-chunk anchoring kick + flat-gain over-correction at low-α*
+timesteps + contraction term). Direction: low gain (~0.5) is the progression-preserving deploy candidate;
+score the full grid with the seam-aligned motion ratio before locking.
+
+## Owner (2026-07-21) — maintenance hold LIFTED; HANDOFF scope active
+
+Box cleared for GPU jobs again (owner confirmation, in-session). All jobs still go through
+`~/projs/drift_correction/scripts/safe_run.sh`. Active scope = `HANDOFF.md` acceptance criteria
+(drift reproduction, progression gain sweep, static-background demo) + §5 unfinished business
+(v3 re-eval, protocol metrics port). v4 / research arms remain on hold.

@@ -103,6 +103,53 @@ def build_runner(
     return runner
 
 
+## Per-step alpha*(t) gating
+
+GATE_ALPHA = {1000.0: 0.81, 960.0: 0.53, 888.8889: 0.53, 727.2728: 0.58}
+"""Unbiased alpha*(t) from the faithful step-0 gate
+(``outputs/gate/gate_faithful.json``): the systematic fraction of the
+drift-induced error per inference timestep. Gate configs deploy the LoRA at
+``alpha*(t) * scale`` — correction strength follows how systematic the
+error actually is at each step."""
+
+
+def parse_gain_token(token: str) -> float | tuple[str, float]:
+    """Parse a config gain token.
+
+    ``"0.7"`` -> flat gain ``0.7``; ``"gate"`` -> ``("gate", 1.0)``;
+    ``"gate0.5"`` -> ``("gate", 0.5)`` (per-step ``alpha*(t) * 0.5``).
+    """
+    token = token.strip()
+    if token.startswith("gate"):
+        return ("gate", float(token[4:]) if len(token) > 4 else 1.0)
+    return float(token)
+
+
+def install_alpha_gate(runner: Any, network: Any, mode: dict) -> None:
+    """Wrap ``predict_flow`` so gate configs rescale the LoRA every step.
+
+    When ``mode["gain"]`` is ``("gate", scale)``, each denoise step sets the
+    LoRA to ``alpha*(t) * scale`` via nearest-t lookup in
+    :data:`GATE_ALPHA`; flat-gain configs pass through untouched (the caller
+    sets the scale once per rollout). Per-token timesteps (AR0) include the
+    first-frame stabilization value; the max is always the scheduler step.
+    """
+    from _lora import set_lora_scale
+
+    transformer = runner.pipeline.diffusion_model.transformer
+    orig_pf = transformer.predict_flow
+
+    def gated_pf(*args, **kwargs):
+        gain = mode["gain"]
+        if isinstance(gain, tuple):
+            t = float(kwargs["timestep"].reshape(-1).max())
+            alpha = min(GATE_ALPHA.items(), key=lambda kv: abs(kv[0] - t))[1]
+            set_lora_scale(network, alpha * gain[1])
+        return orig_pf(*args, **kwargs)
+
+    transformer.predict_flow = gated_pf
+
+
 ## Rollout capture
 
 
