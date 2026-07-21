@@ -10,9 +10,19 @@ before running anything.*
 
 ## 1. Goal
 
-**Core task: port the paper-final method — the av2s recipe (§3) — and its deployment learnings
-(gain dial, α*(t) gate) to this integration. That is the whole mandatory scope.**
-Optional research arms (progression fix) live in §5 and run ONLY on owner request.
+**Priority (owner, 2026-07-21): make the method demonstrably BENEFIT FlashDreams first — no new
+research methods.** Core task: deploy the paper-final av2s recipe (§3) tuned to (a) keep the
+measured drift benefit while (b) MAXIMALLY preserving progression, and (c) demonstrate the
+flagship use case: static background / no camera motion with foreground object motion intact.
+
+Acceptance criteria (all three, owner eyeball final):
+1. **Drift**: merged corrector reproduces ≥ the REPORT.md drift reduction at the chosen gain.
+2. **Progression**: tune gain / α*(t) so commanded trajectories keep advancing — dynamic degree
+   within ~15% of base, no visible per-chunk snap-back; report the gain sweep (0.5/0.7/0.85/1.0).
+3. **Static-background demo**: a small suite (≥6 scenes) of static-camera prompts with moving
+   foreground subjects — story flow intact (no resets), no blur, no seam artifacts, background
+   stable, foreground motion preserved (RAFT within ~10% of base); include one new-element
+   entrance scene (the anchoring pull resists novel content — verify it doesn't).
 The paper (`~/projs/drift_correction/iclr2026`) is FROZEN and firewalled from this work: nothing
 from HY goes into it, and nothing here may touch it.
 
