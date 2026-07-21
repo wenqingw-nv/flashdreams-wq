@@ -39,7 +39,7 @@ Recipe (proven on Wan2.1-1.3B; this port's v2 already approximates it in x̂0 sp
 1. **Counterfactual teacher**: target = frozen model's prediction at the SAME noisy state with
    the clean-counterpart history; loss normalized per-sample by the drift gap
    ‖target − base‖². Native anchoring (z_t from the model's own rollout) — GT-anchoring
-   provably injects drift.
+   empirically injects drift.
 2. **v2 closed loop**: DAgger pool aggregation (round-0 + corrected-rollout round-1) +
    drift-contraction term (commit corrected x̂0 into the next block's history WITH grad,
    penalize that block's gap; weight 0.5).
@@ -63,7 +63,7 @@ validate one case before shipping: a commanded entrance of a new story element a
 - **The HY escape clause:** on HY-WorldPlay the future *trajectory* is a command input
   (viewmats/actions) — not unpredictable. A teacher conditioned on the commanded future poses
   rotates the anchoring force into trajectory-following, leaving only content-along-the-path
-  uncertain. This is the design to pursue (§5), ranked ABOVE the on-hold v4 (mixed-geometry +
+  uncertain. If the owner opens the progression thread, this is the candidate design, ranked above the on-hold v4 (mixed-geometry +
   trust region).
 - **Owner's eyeball outranks instruments.** Every quantitative win this window that failed the
   owner's eye died. Always produce side-by-side mp4s (`ffmpeg hstack`, name which side is which
