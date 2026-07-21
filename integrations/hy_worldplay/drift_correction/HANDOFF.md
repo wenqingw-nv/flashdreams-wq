@@ -10,12 +10,11 @@ before running anything.*
 
 ## 1. Goal
 
-Refresh this port to the paper-final method and this window's findings: (a) confirm/upgrade the
-corrector recipe to the locked paper version, (b) apply the deployment learnings (gain dial,
-α*(t) gate), (c) pursue the **HY-specific progression fix** — the commanded-future
-motion-conditioned teacher — which supersedes the on-hold v4 design. The paper
-(`~/projs/drift_correction/iclr2026`) is FROZEN and firewalled from this work: nothing from HY
-goes into it, and nothing here may touch it.
+**Core task: port the paper-final method — the av2s recipe (§3) — and its deployment learnings
+(gain dial, α*(t) gate) to this integration. That is the whole mandatory scope.**
+Optional research arms (progression fix) live in §5 and run ONLY on owner request.
+The paper (`~/projs/drift_correction/iclr2026`) is FROZEN and firewalled from this work: nothing
+from HY goes into it, and nothing here may touch it.
 
 ## 2. What already exists here (do not rebuild)
 
@@ -76,7 +75,13 @@ validate one case before shipping: a commanded entrance of a new story element a
   artifact). HY's boundary artifact is a content-level jump-cut (context/memory handoff) —
   different mechanism; overlap/blend at the content level is the relevant fix class here.
 
-## 5. Suggested next arms, in order
+## 5. OPTIONAL research arms (owner-gated — not part of the core port)
+
+These target HY's known progression trade (camera never reaches the bridge at high gain). They
+are NOT the paper method. Items 2–3 are motivated by the dichotomy in §4: the naive
+future-teacher variants FAILED on the paper host and must not be retried as-is; the
+commanded-future variant is the dichotomy's escape clause, testable only on hosts like HY where
+the trajectory is an input. Gate first, kill bars set in advance, owner eyeball decides.
 
 1. **Re-eval v3 (round-2 DAgger)** — trained, eval pending (was on hold). Standard eval +
    owner eyeball. ~0.5 d.
