@@ -99,3 +99,19 @@ overshoot barely moves at full gain (sat 0.058 vs v2 0.066) while progression (l
 0.813), quality, and seam pulse are all slightly worse; at the deploy points (0.5 / gate) v2
 dominates every axis, and low-gain composition already resolves saturation (0.013-0.019).
 No deploy point where v3 wins -> v2 remains the deployed LoRA.
+
+## 2026-07-21 static-background demo suite (acceptance criterion 3; owner eyeball pending)
+
+8 locked-off scenes (scene7 = new-element entrance), seed 5042, 24 chunks, v2 LoRA. Aggregates:
+
+| config | MUSIQ/late | Δ-drift | dyn (×base) | sat | cuts | seam-mot | seam-sharp |
+|---|---|---|---|---|---|---|---|
+| base | 63.2/62.3 | +0.62 | 6.88 (1.00) | 0.041 | 0.38 | 1.201 | 0.981 |
+| corr050 | 63.9/63.6 | +0.19 | 6.53 (0.95) | 0.021 | 0.13 | 1.267 | 0.958 |
+| corrgate | 65.7/65.9 | −0.31 | 5.33 (0.78) | 0.017 | 0.00 | 1.216 | 0.984 |
+| **corrgate050** | 64.9/64.9 | −0.13 | 6.31 (0.92) | 0.019 | 0.13 | 1.226 | 0.972 |
+
+corrgate050 = best all-round on instruments (motion guard PASS at 0.92x, seams near base, negative
+drift, +1.7 MUSIQ, sat halved, host jump-cuts reduced). corrgate = best quality but fails the motion
+guard (0.78x, entrance scene 0.76x). Entrance scene7 motion: corr050 0.95x / corrgate050 0.91x of
+base. Artifacts: `outputs/demo_static/{scores.json,sbs_*.mp4,*/*.strip.png}`.
