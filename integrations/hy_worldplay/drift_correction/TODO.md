@@ -3,115 +3,39 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Counterfactual-Forcing port — status & TODO
+# Clean Forcing port — current work & next steps
 
-Port of the drift-corrector LoRA (Counterfactual Forcing, v2 = DAgger + drift-contraction) onto the
-HY-WorldPlay integration. Zero-real-data regime: strafe-loop rollouts with lap-1 clean teachers, first
-frames synthesized from MovieGen prompts. Checkpoints/evals under `outputs/` (gitignored); decisions and
-metrics logged in `OWNER_FEEDBACK.md` and `outputs/*/scores.json`.
+*(2026-07-21 refresh. History → git log of this file; quality issues → `issues.md`; results →
+`REPORT.md` + `outputs/*/scores.json`.)*
 
-## Resolved
+## Where we are
 
-| issue | solution |
-|---|---|
-| Step-0 gate below reference bar (α* 0.53–0.81 vs Wan2.1's 0.91–0.99) | Proceeded per owner; α*(t) is **non-flat** on this host → gate became a deploy knob (`TGATE=1`) |
-| Trainer grads silently severed (rolling-KV write path) | `_train_attn.py` functional dual-branch attention (verified ≈ stock, mean |Δx̂0| 0.01) |
-| In-place inference-only Triton RoPE breaks autograd | Differentiable torch RoPE matching the kernel's lane layout (pair k ← lane 2k) |
-| ~40 GiB tape / OOM next to co-tenant jobs | Per-block checkpointing + two-phase backward (dot-product chain rule), single cache; VAE CUDA-graphs off |
-| v1 blur + structure loss (bridge fade) | v2 DAgger + contraction: structure preserved, MUSIQ 71.1 vs base 69.1, Δ-drift −50% (bridge cells) |
-| Metrics gameable one-by-one | Scorer carries MUSIQ Δ, RAFT dynamics, sharpness ratio, sat-drift, advance-score + strips |
+**Deploy candidate: `corrgate050` (α*(t) gate × 0.5 gain) — passed both kill bars on instruments.**
+Bridge: best progression of any corrector config (latesim 0.741), seams < corr050, post-boundary
+sharpness ≈ base, Δ-drift −0.15, MUSIQ 72.3. Static suite (8 scenes incl. entrance): motion guard
+PASS (0.92× base; entrance scene 0.91×), sat halved (0.019), host jump-cuts 0.38→0.13, +1.7 MUSIQ.
+Fallback split if owner rejects: corr050 for commanded motion, plain gate for static/drift-critical.
+v3 re-eval CLOSED (no deploy point beats v2 — v2 stays the deployed LoRA). Seam metric fixed (true
+cadence 13+16k; pre-fix seam numbers not comparable).
 
-## Open — fixes queued (v4 chain running, final iteration)
+## Now (blocking on owner eyeball)
 
-| issue | solution | status |
-|---|---|---|
-| **Repeat prior**: loop-trained corrector doesn't follow forward trajectories (sim-to-start ~0.62 vs base ~0.42 vs reference-host scale SF 0.17 / av2s 0.50; stuck/repeats); gate/gain can't fix (in weights). Appearing people/objects = the known scene-reset scoping (see `drift_correction/TODO_progression_bias.md`), not corrector-induced | Mixed-geometry pairs (legs 3/4/5 break the fixed revisit lag) + trust-region `FID_W ∈ {0.3,0.1,1.0}` (drift-gap-normalized, warmed up) | v4 arms queued |
-| **Contraction stickiness**: progressive motion decay (dyn 20→9); owner cross-host: contraction kills progression even without loops | Contraction OFF in v4; v3 (CW .25) vs v3b (CW 0) gives this host's ablation row | v3/v3b tonight |
-| **Saturation overshoot** (v2 sat-drift 0.070 vs base 0.045; v1↔v2 DAgger oscillation) | Round-2 DAgger pool (v3+) + verify in grid; stat-matching term only if it persists | in grid |
-| Revisit-memory "2.4×" claim inflated by repeat prior | Retracted; re-report only for checkpoints with advance-score ≈ base | in writeup |
+1. **Owner verdicts** on: bridge sbs (`outputs/eval_sweep/sbs_*corrgate050*`), static demo sbs
+   (`outputs/demo_static/sbs_*scene{0..7}*`), and the scene-7 entrance. → ship decision.
+2. **Owner call**: accept corrgate050's −23% dynamics on commanded motion, or sweep
+   gate×{0.55–0.7} for the knee (~3 h GPU).
 
-## Backlog (post-v4 / optional)
+## Next (after ship decision)
 
-- Full-res held-out seed frames (480×832 upscales broke Δ-MUSIQ on the 18-scene finals; single-file
-  Wan2.2 ckpt 404 → sharded index works, decode OOM at 704×1280 needs chunked decode or more headroom).
-- Official VBench 6-dim + sat-drift suite via the on-box Self-Forcing harness (paper-comparable table).
-- Grad-through-prefill in the dagger term (corrector currently can't reshape memory *encoding*).
-- q/k-only LoRA arm (attention routing without content-writing v/o); must train from scratch.
-- LoRA→weights merge for zero-overhead deploy + runner flag, if a config passes.
-- 50s-horizon eval; `corr05` half-gain anomaly unexplained (likely meaningless interpolated LoRA state).
-- Longer-term: 2nd-host caveats for the paper (host-dependent gains, non-flat α*(t), Δ-metric assumption).
+3. Update `REPORT.md` deploy recommendation to the chosen config; merge the LoRA into weights
+   behind a runner flag (zero-overhead deploy path).
+4. Stop the stale parallel agent session (was launching duplicate jobs; three dups already killed).
+5. Ops: add the ~45-min filesystem/clock desync between shells to the existing UVM driver ticket.
 
-## Decision rule (owner, `OWNER_FEEDBACK.md`)
+## Parked
 
-v4 pass bar = advance-score ≈ base (0.58) at ≥ baseline quality plus standing guards (Δ ≥30% cut, dyn,
-sat, sharpness). Pass → deploy config + merge. Fail → deploy-config recommendation from the grid + failure
-analysis (loop-teacher bias, contraction stickiness) as the final deliverable.
-
-## 2026-07-21 owner eyeball on demo_static + eval_sweep (PRIORITY)
-
-Corrected videos show a chunk-cadence pulse + post-boundary blur that the BASE does not have
-(both static-bg and progression runs). Diagnosis: corrector-INDUCED here (unlike the Wan host
-where the base pulsed hardest): (1) correction is piecewise-constant per chunk (memory updates
-once per chunk) -> statistics jump at boundaries, visible against HY's boundary-clean base;
-(2) alpha*(t) is non-flat on this host (0.81@t1000 -> ~0.53 mid/low t) and the sweep ran UNGATED
-flat gain -> the non-systematic half of the target is injected at low-t steps, and the distilled
-4-step solver commits it nearly straight to pixels (worst on chunk-initial frames).
-
-Actions (deployment scope, in order):
-1. Rerun demo_static + one sweep point WITH the alpha*(t) gate (REPORT.md best row config).
-2. If a beat survives: correct only the first 1-2 high-t solver steps per chunk.
-3. Add a seam metric (boundary vs interior sharpness/luminance delta) per config; report
-   base / corr070 / gated side by side + sbs mp4s for owner eyeball.
-
-## 2026-07-21 owner verdicts on eval_sweep / eval_v2bridge (deployment picture)
-
-- **corr050 (flat gain 0.5): REACHES the bridge**, better color saturation than base, small pulses,
-  acceptable quality -> meets acceptance criterion 2 (progression). Default for commanded-motion use.
-- **corrgate (alpha*(t) gate): best quality but does NOT reach the bridge** -> gate keeps correction
-  strongest at high t, which is where structure/progression is decided; use for static/drift-critical
-  scenes where anchoring is desired.
-- NEXT RUN (one config): **gate x 0.5 global gain** — cuts the noisy low-t share AND halves the
-  structural pull; expect bridge reached with fewer pulses than flat 0.5. Then the static-bg demo
-  suite at {corr050, gated, gate x 0.5} + sbs for owner.
-
-## 2026-07-21 corrgate050 result (agent; owner eyeball pending)
-
-Seam metrics re-aligned to the true decoded cadence (13 + 16k frames; the earlier 13-frame
-alignment smeared the boundary signal — all seam numbers below are on the fixed metric).
-Bridge cells (p0-p2, s5042), kill bar was: latesim <= ~0.80, seam pulse <= corr050, quality >= corr050.
-
-| config | MUSIQ/late | Δ-drift | dyn | latesim | seam-mot | seam-sharp |
-|---|---|---|---|---|---|---|
-| base | 68.0/70.0 | +1.70 | 19.3 | 0.603 | 1.188 | 0.987 |
-| corr050 | 71.2/68.7 | +0.47 | 16.1 | 0.779 | 1.372 | 0.940 |
-| corrgate | 73.8/73.5 | −0.86 | 10.4 | 0.873 | 1.311 | 0.980 |
-| **corrgate050** | 72.3/71.6 | **−0.15** | 14.8 | **0.741** | **1.243** | **0.977** |
-
-PASS on all bar axes: best progression proxy of any corrector config (latesim 0.741 < corr050),
-pulse and post-boundary blur near base, negative drift, quality above corr050. Soft spot:
-dynamics −23% vs base (guard is ~15-20%). sbs: `outputs/eval_sweep/sbs_*corrgate050*` (vs base
-and vs corr050).
-
-## 2026-07-21 v3 re-eval (HANDOFF §5.1) — CLOSED, v2 stays deployed
-
-Same bridge cells (`outputs/eval_v3`, lora_v3 at corr/corr050/corrgate): the targeted saturation
-overshoot barely moves at full gain (sat 0.058 vs v2 0.066) while progression (latesim 0.848 vs
-0.813), quality, and seam pulse are all slightly worse; at the deploy points (0.5 / gate) v2
-dominates every axis, and low-gain composition already resolves saturation (0.013-0.019).
-No deploy point where v3 wins -> v2 remains the deployed LoRA.
-
-## 2026-07-21 static-background demo suite (acceptance criterion 3; owner eyeball pending)
-
-8 locked-off scenes (scene7 = new-element entrance), seed 5042, 24 chunks, v2 LoRA. Aggregates:
-
-| config | MUSIQ/late | Δ-drift | dyn (×base) | sat | cuts | seam-mot | seam-sharp |
-|---|---|---|---|---|---|---|---|
-| base | 63.2/62.3 | +0.62 | 6.88 (1.00) | 0.041 | 0.38 | 1.201 | 0.981 |
-| corr050 | 63.9/63.6 | +0.19 | 6.53 (0.95) | 0.021 | 0.13 | 1.267 | 0.958 |
-| corrgate | 65.7/65.9 | −0.31 | 5.33 (0.78) | 0.017 | 0.00 | 1.216 | 0.984 |
-| **corrgate050** | 64.9/64.9 | −0.13 | 6.31 (0.92) | 0.019 | 0.13 | 1.226 | 0.972 |
-
-corrgate050 = best all-round on instruments (motion guard PASS at 0.92x, seams near base, negative
-drift, +1.7 MUSIQ, sat halved, host jump-cuts reduced). corrgate = best quality but fails the motion
-guard (0.78x, entrance scene 0.76x). Entrance scene7 motion: corr050 0.95x / corrgate050 0.91x of
-base. Artifacts: `outputs/demo_static/{scores.json,sbs_*.mp4,*/*.strip.png}`.
+- Host-level jump-cut at chunk boundaries (base artifact; content-level overlap/blend in the
+  runner — not corrector-fixable). See `issues.md` row 4.
+- Research arms (commanded-future teacher, pose-memory oracle): owner-gated, documented in
+  `~/projs/drift_correction/flashdreams_value.md`.
+- Official VBench 6-dim suite via the on-box harness (paper-comparable table) — nice-to-have.
