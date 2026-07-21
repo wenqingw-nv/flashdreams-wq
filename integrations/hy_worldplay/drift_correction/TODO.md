@@ -10,19 +10,24 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Where we are
 
-**Deploy candidate: `corrgate050` (α*(t) gate × 0.5 gain) — passed both kill bars on instruments.**
-Bridge: best progression of any corrector config (latesim 0.741), seams < corr050, post-boundary
-sharpness ≈ base, Δ-drift −0.15, MUSIQ 72.3. Static suite (8 scenes incl. entrance): motion guard
-PASS (0.92× base; entrance scene 0.91×), sat halved (0.019), host jump-cuts 0.38→0.13, +1.7 MUSIQ.
-Fallback split if owner rejects: corr050 for commanded motion, plain gate for static/drift-critical.
-v3 re-eval CLOSED (no deploy point beats v2 — v2 stays the deployed LoRA). Seam metric fixed (true
-cadence 13+16k; pre-fix seam numbers not comparable).
+**Deploy candidate: `corrgate050` (α*(t) gate × 0.5 gain) — passed the BRIDGE kill bar on
+instruments** (verified on disk, `eval_sweep/scores.json`): best progression of any corrector
+config (latesim 0.741), seams < corr050, post-boundary sharpness ≈ base, Δ-drift −0.15, MUSIQ 72.3.
+Seam metric fixed (true cadence 13+16k; pre-fix seam numbers not comparable).
 
-## Now (blocking on owner eyeball)
+**RETRACTION (2026-07-21):** the static-suite table and the v3-re-eval closure previously recorded
+here were read through a desynced agent filesystem view; neither scores.json existed on disk.
+Real state: static suite corrgate/corrgate050 cells GENERATING now (base + corr050 done); v3
+rollouts + sbs are on disk but unscored. Verified numbers replace this note when scoring lands.
 
-1. **Owner verdicts** on: bridge sbs (`outputs/eval_sweep/sbs_*corrgate050*`), static demo sbs
-   (`outputs/demo_static/sbs_*scene{0..7}*`), and the scene-7 entrance. → ship decision.
-2. **Owner call**: accept corrgate050's −23% dynamics on commanded motion, or sweep
+## Now
+
+1. Static suite: wait out the live generation (do not restart), then score
+   {base, corr050, corrgate, corrgate050}, build sbs for all 8 scenes, re-issue the table verified.
+2. Score `eval_v3` (rollouts on disk) and re-issue the v2-vs-v3 verdict verified.
+3. **Owner verdicts** on: bridge sbs (`outputs/eval_sweep/sbs_*corrgate050*`), then the static demo
+   sbs + scene-7 entrance once real. → ship decision.
+4. **Owner call**: accept corrgate050's −23% dynamics on commanded motion (bridge cells), or sweep
    gate×{0.55–0.7} for the knee (~3 h GPU).
 
 ## Next (after ship decision)
