@@ -10,11 +10,18 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Where we are
 
-**Deploy candidate: `corrgate050` (α*(t) gate × 0.5 gain) — passed the BRIDGE kill bar per
-`eval_sweep/scores.json`, now UNDER RE-VERIFICATION:** the file is on disk but was computed in the
-desynced view (deterministic seam metrics differ between it and a real-view pass on identical base
-videos: 1.188 vs 1.249), so a real-view re-score of eval_sweep is queued; bridge conclusions are
-provisional until it lands. Seam metric fix (true cadence 13+16k) is code-level and stands.
+**Deploy candidate: `corrgate050` (α*(t) gate × 0.5 gain) — bridge kill bar PASSED on verified
+real-disk scores (13:29) + OWNER EYEBALL PASS.** Verified bridge row: latesim 0.669 (best of any
+corrector config; corr050 0.779, corrgate 0.873), dyn 20.3 ≈ base 19.3 (**no dynamics loss** — the
+earlier "−23%" was a phantom-view artifact), seam 1.211 / sharp 0.993 (mildest pulse, at/below
+base), MUSIQ 70.4 (> base 68.0, marginally < corr050 71.2), Δ +0.88 = −48% cut vs base (bar ≥30%).
+corrgate stays the pure-quality point (73.8, Δ −151%) at heavy anchoring. Seam metric fix (true
+cadence 13+16k) stands.
+
+**v3 re-eval, verified (13:23): v2 stays deployed.** v3's targeted saturation overshoot got worse
+at full gain (0.074 vs v2 0.066); at gate×0.5 v3 trades slightly better Δ/pulse (+0.38/1.175) for
+clearly worse dynamics (15.3 vs 20.3) and progression (latesim 0.741 vs 0.669) — the owner's
+priority axes. `eval_v3/scores.json`.
 
 **Static-background suite — VERIFIED table (2026-07-21, scores.json 13:17 on disk; supersedes the
 retracted phantom table, which was wrong in every number):**
