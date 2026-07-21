@@ -62,3 +62,14 @@ Actions (deployment scope, in order):
 2. If a beat survives: correct only the first 1-2 high-t solver steps per chunk.
 3. Add a seam metric (boundary vs interior sharpness/luminance delta) per config; report
    base / corr070 / gated side by side + sbs mp4s for owner eyeball.
+
+## 2026-07-21 owner verdicts on eval_sweep / eval_v2bridge (deployment picture)
+
+- **corr050 (flat gain 0.5): REACHES the bridge**, better color saturation than base, small pulses,
+  acceptable quality -> meets acceptance criterion 2 (progression). Default for commanded-motion use.
+- **corrgate (alpha*(t) gate): best quality but does NOT reach the bridge** -> gate keeps correction
+  strongest at high t, which is where structure/progression is decided; use for static/drift-critical
+  scenes where anchoring is desired.
+- NEXT RUN (one config): **gate x 0.5 global gain** — cuts the noisy low-t share AND halves the
+  structural pull; expect bridge reached with fewer pulses than flat 0.5. Then the static-bg demo
+  suite at {corr050, gated, gate x 0.5} + sbs for owner.
