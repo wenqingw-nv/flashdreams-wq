@@ -249,6 +249,19 @@ class HyWorldPlayWanI2VRunnerConfig(RunnerConfig):
     memory_points_radius: float = 8.0
     """Radius of the Monte-Carlo sphere."""
 
+    drift_corrector: Path | None = None
+    """Clean Forcing drift-corrector LoRA checkpoint (v2). ``None``
+    disables correction. When set, correction is keyed on the job's
+    trajectory content: static poses (all idle action labels) run the
+    untouched base weights — static scenes measure negative drift on this
+    host, so correction there is pure artifact cost — while
+    commanded-motion poses deploy the corrector at
+    ``alpha*(t) * drift_corrector_gain`` per denoise step."""
+
+    drift_corrector_gain: float = 0.5
+    """Global gain composed with the per-step ``alpha*(t)`` gate profile;
+    the shipped configuration (``corrgate050``) is 0.5."""
+
 
 class HyWorldPlayWanI2VRunner(
     Runner[HyWorldPlayWanI2VRunnerConfig, WanInferencePipeline]
@@ -339,6 +352,14 @@ class HyWorldPlayWanI2VRunner(
             )
         if not cfg.image_path.exists():
             raise FileNotFoundError(f"image_path {cfg.image_path} does not exist")
+
+        if cfg.drift_corrector is not None:
+            from hy_worldplay._drift_corrector import maybe_apply_drift_corrector
+
+            mode = maybe_apply_drift_corrector(
+                self, cfg.drift_corrector, cfg.drift_corrector_gain
+            )
+            logger.info(f"[{cfg.runner_name}] drift corrector: {mode}")
 
         first_param = next(self.pipeline.parameters())
         device = first_param.device

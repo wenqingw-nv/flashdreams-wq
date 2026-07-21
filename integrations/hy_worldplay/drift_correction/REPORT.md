@@ -5,6 +5,64 @@ SPDX-License-Identifier: Apache-2.0
 
 # Drift correction on FlashDreams HY-WorldPlay — results report (2026-07-16)
 
+## 2026-07-21 deployment pass (Clean Forcing; HANDOFF acceptance criteria)
+
+Gain sweep on 3 held-out trajectories (24 chunks, seed 5042, scene-matched prompt, base re-run
+in-sweep). New protocol metrics ported from the reference host: DINO latesim (anchoring), lag-2s
+identity, cut count, seam-aligned motion/sharpness ratios (true decoded cadence 13 + 16k).
+
+| config | MUSIQ | late | Δ-drift | Δ cut | dyn | sat-drift | sim | latesim |
+|---|---|---|---|---|---|---|---|---|
+| base | 68.0 | 70.0 | +1.70 | — | 19.3 | 0.036 | 0.42 | 0.60 |
+| **corr050** | 71.2 | 68.7 | +0.47 | **−72%** | **16.1** | **0.013** | **0.56** | 0.78 |
+| corr070 | 72.9 | 72.3 | −0.76 | −145% | 13.4 | 0.032 | 0.70 | 0.85 |
+| corr085 | 72.3 | 72.1 | −0.89 | −152% | 12.1 | 0.047 | 0.72 | 0.84 |
+| corr (1.0) | 72.1 | 71.6 | −0.56 | −133% | 11.7 | 0.066 | 0.71 | 0.81 |
+| corrgate | **73.8** | **73.5** | −0.86 | −151% | 10.4 | 0.020 | 0.68 | 0.87 |
+
+Owner eyeball verdicts (final per house rule): **corr050 reaches the bridge** (progression kept,
+better color than base, small pulses, acceptable quality); **corrgate anchors** (best quality, does
+not reach the bridge). Only corr050 approaches acceptance criterion 2 (dyn −17% vs the ~15% bar);
+every higher gain loses 30–46% dynamics.
+
+**Corrector-induced seam pulse (new finding, measured):** on this boundary-clean production host the
+corrector's per-chunk restoring force is visible as a chunk-cadence beat (motion stalls at seams,
+post-boundary blur) — the paper host's issue-3 mechanism unmasked, amplified by flat-gain deployment
+against this host's non-flat α*(t). Deployment levers under test: α*(t) gate × 0.5 global gain
+(`corrgate050`; kill bar: reaches the bridge at seam ≥ corr050), per-step t-restriction as fallback.
+
+**gate×0.5 composition (corrgate050), verified + owner-eyeballed:** latesim 0.669 (best progression
+of any corrector config), dyn 20.3 ≈ base (no dynamics loss), seam-motion 1.211 / seam-sharpness
+0.993 (mildest pulse, at/below base), Δ −48% vs base, MUSIQ 70.4. Owner eyeball on the bridge sbs:
+"much better in progression, without much pulling back or pulse issue" — PASS.
+
+**Static-background suite (8 locked-off scenes incl. new-element entrance), verified + owner-eyeballed:**
+on static content the base wins both axes (owner ordering, quality and pulse alike:
+base > corrgate050 > corrgate > corr full). Consistent with the instruments — the base measures
+*negative* drift on these scenes (Δ −5.97): there is nothing to correct, so any correction is pure
+artifact cost. v3 re-eval closed on verified scores: v2 stays the deployed LoRA (v3's target sat
+overshoot got worse at full gain, and it loses dynamics/progression at the deploy point).
+
+## SHIP DECISION (owner, 2026-07-21) — content-keyed deployment
+
+- **Commanded-motion jobs → `corrgate050`** (v2 LoRA at per-step ``alpha*(t) × 0.5``).
+- **Static / no-camera-motion jobs → corrector OFF** (untouched base weights). Static scenes don't
+  drift on this host; corrector-off there is by design, not an open defect (this also moots the
+  scene-5 motion-collapse observation from the static suite).
+- The selector is free on HY-WorldPlay: the trajectory is a runtime input, so the runner keys the
+  choice per job — `HyWorldPlayWanI2VRunnerConfig.drift_corrector` (LoRA checkpoint path;
+  `drift_corrector_gain=0.5`) applies the corrector only when the pose contains any non-idle action
+  label (`hy_worldplay/_drift_corrector.py`). Static jobs bypass LoRA application entirely (zero
+  overhead); motion jobs keep the LoRA unfused because the gate is per-timestep — a single-scale
+  weight merge cannot express ``alpha*(t)``, and the unfused cost is ~0.3% params of extra matmul.
+
+Non-shipped alternatives (one line each): **corr050** — flat 0.5 gain, slightly better MUSIQ/Δ on
+the bridge but worse pulse/blur and erratic motion on static content; **full gain (corr)** — best
+raw drift cut but −40% dynamics and the strongest seam beat; **plain gate (corrgate)** — best
+absolute quality (73.8) but anchors (never reaches the bridge; −41% dynamics on static suite).
+
+Artifacts: `outputs/eval_sweep/` (scores.json + sbs mp4s), `outputs/demo_static/`, `outputs/eval_v3/`.
+
 Counterfactual-Forcing drift corrector (frozen-base LoRA, 14.75M params / ~0.3%, **zero real videos
 end-to-end**) ported to the HY-WorldPlay WAN-5B integration (distilled 4-step, camera/action-conditioned
 world model). ~2.5 GPU-days on one shared GB300. Corrector merges into the weights at deploy → **zero
