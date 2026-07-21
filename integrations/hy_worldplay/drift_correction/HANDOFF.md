@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All 
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# HANDOFF — port the paper-final Counterfactual Forcing to HY-WorldPlay
+# HANDOFF — port the paper-final Clean Forcing (renamed from Counterfactual Forcing) to HY-WorldPlay
 
 *2026-07-21. For a fresh agent taking over this integration. Owner: wenqingw. Read this fully
 before running anything.*
