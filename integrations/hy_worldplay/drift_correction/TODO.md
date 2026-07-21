@@ -73,3 +73,21 @@ Actions (deployment scope, in order):
 - NEXT RUN (one config): **gate x 0.5 global gain** — cuts the noisy low-t share AND halves the
   structural pull; expect bridge reached with fewer pulses than flat 0.5. Then the static-bg demo
   suite at {corr050, gated, gate x 0.5} + sbs for owner.
+
+## 2026-07-21 corrgate050 result (agent; owner eyeball pending)
+
+Seam metrics re-aligned to the true decoded cadence (13 + 16k frames; the earlier 13-frame
+alignment smeared the boundary signal — all seam numbers below are on the fixed metric).
+Bridge cells (p0-p2, s5042), kill bar was: latesim <= ~0.80, seam pulse <= corr050, quality >= corr050.
+
+| config | MUSIQ/late | Δ-drift | dyn | latesim | seam-mot | seam-sharp |
+|---|---|---|---|---|---|---|
+| base | 68.0/70.0 | +1.70 | 19.3 | 0.603 | 1.188 | 0.987 |
+| corr050 | 71.2/68.7 | +0.47 | 16.1 | 0.779 | 1.372 | 0.940 |
+| corrgate | 73.8/73.5 | −0.86 | 10.4 | 0.873 | 1.311 | 0.980 |
+| **corrgate050** | 72.3/71.6 | **−0.15** | 14.8 | **0.741** | **1.243** | **0.977** |
+
+PASS on all bar axes: best progression proxy of any corrector config (latesim 0.741 < corr050),
+pulse and post-boundary blur near base, negative drift, quality above corr050. Soft spot:
+dynamics −23% vs base (guard is ~15-20%). sbs: `outputs/eval_sweep/sbs_*corrgate050*` (vs base
+and vs corr050).
