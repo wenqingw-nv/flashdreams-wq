@@ -27,7 +27,7 @@ from HY goes into it, and nothing here may touch it.
   t-dependence is why the gate is a deploy knob here).
 - Scripts: `build_pairs.py`, `train_v1.py`, `train_v2.py`, `eval_rollouts.py`, `score_drift.py`,
   `gate_faithful.py`, `gate_systematicity.py`, helpers `_rollout.py`, `_pairs.py`, `_lora.py`,
-  `_train_attn.py`. NEW and untested on GPU: `gate_oracle.py` (pose-memory oracle gate — see §5).
+  `_train_attn.py`. NEW and untested on GPU: `gate_oracle.py` (pose-memory oracle gate — out of scope, see §5 pointer).
 - Branch `hy-worldplay-counterfactual-forcing`, remote `wenqingw-nv/flashdreams-wq`.
 - Env: run from the flashdreams repo root with `.venv/bin/python`. GPU jobs go through
   `~/projs/drift_correction/scripts/safe_run.sh` (2-slot lock in `/tmp/gpu_slots`, driver-wedge
@@ -63,8 +63,8 @@ validate one case before shipping: a commanded entrance of a new story element a
 - **The HY escape clause:** on HY-WorldPlay the future *trajectory* is a command input
   (viewmats/actions) — not unpredictable. A teacher conditioned on the commanded future poses
   rotates the anchoring force into trajectory-following, leaving only content-along-the-path
-  uncertain. If the owner opens the progression thread, this is the candidate design, ranked above the on-hold v4 (mixed-geometry +
-  trust region).
+  uncertain. If the owner opens the progression thread, this is the candidate design (see
+  `flashdreams_value.md`), ranked above the on-hold v4.
 - **Owner's eyeball outranks instruments.** Every quantitative win this window that failed the
   owner's eye died. Always produce side-by-side mp4s (`ffmpeg hstack`, name which side is which
   in the filename) and wait for the verdict before building on a result.
@@ -75,31 +75,17 @@ validate one case before shipping: a commanded entrance of a new story element a
   artifact). HY's boundary artifact is a content-level jump-cut (context/memory handoff) —
   different mechanism; overlap/blend at the content level is the relevant fix class here.
 
-## 5. OPTIONAL research arms (owner-gated — not part of the core port)
+## 5. Unfinished port business (in scope)
 
-These target HY's known progression trade (camera never reaches the bridge at high gain). They
-are NOT the paper method. Items 2–3 are motivated by the dichotomy in §4: the naive
-future-teacher variants FAILED on the paper host and must not be retried as-is; the
-commanded-future variant is the dichotomy's escape clause, testable only on hosts like HY where
-the trajectory is an input. Gate first, kill bars set in advance, owner eyeball decides.
+1. **Re-eval v3 (round-2 DAgger)** — trained checkpoint `outputs/lora_v3.pt`, evaluation was put
+   on hold; it targets the v2 saturation overshoot. Standard eval + owner eyeball. ~0.5 d.
+2. **Protocol metrics port** — one-code-path anchoring / lag-2s identity / cut-rate / RAFT
+   dynamics (reference implementation:
+   `~/projs/drift_correction/scripts/posthoc_metrics.py`; add RAFT since HY has motion commands).
 
-1. **Re-eval v3 (round-2 DAgger)** — trained, eval pending (was on hold). Standard eval +
-   owner eyeball. ~0.5 d.
-2. **Gate the pose-memory oracle** — `gate_oracle.py` (written, never run): extends the
-   teacher's memory with clean lap-1 frames at the poses the camera is ABOUT to visit (pure
-   index-set change, fully in-distribution; no bidi pass needed). Reports α*_clean vs α*_oracle,
-   info content, and a new-pose-leak diagnostic (if loop pairs already FOV-cover future poses,
-   info ≈ 0 → needs non-loop pairs). ~2–4 h GPU. Kill bar: info < 0.05 → stop.
-3. **Commanded-future teacher (the big one)**: teacher conditioned on future viewmats/actions +
-   pose-matched clean memory. Design sketch: build pairs on FORWARD trajectories (not loops)
-   where the "future" context = commanded poses + (if available) clean content at those poses
-   from a slow/reference traversal; gate it exactly like #2 before training. This is the
-   dichotomy-escape experiment — if α* holds and info is real, train v2-recipe with the swapped
-   teacher and judge progression on the bridge trajectory (owner's canonical eyeball scene:
-   `outputs/eval_v2bridge/`, the camera should REACH the bridge).
-4. **Protocol metrics port**: one-code-path anchoring / lag-2s identity / cut-rate / RAFT
-   dynamics (see `~/projs/drift_correction/scripts/posthoc_metrics.py` for the reference
-   implementation; add RAFT since HY has real motion commands).
+Research directions for HY's progression trade (commanded-future teacher, pose-memory oracle
+gate `gate_oracle.py`) are deliberately NOT in this handoff's scope — they are documented in
+`~/projs/drift_correction/flashdreams_value.md` and start only on explicit owner request.
 
 ## 6. Pitfalls that cost us time (learn from our scars)
 
