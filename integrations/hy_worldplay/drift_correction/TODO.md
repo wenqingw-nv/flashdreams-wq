@@ -91,3 +91,11 @@ PASS on all bar axes: best progression proxy of any corrector config (latesim 0.
 pulse and post-boundary blur near base, negative drift, quality above corr050. Soft spot:
 dynamics −23% vs base (guard is ~15-20%). sbs: `outputs/eval_sweep/sbs_*corrgate050*` (vs base
 and vs corr050).
+
+## 2026-07-21 v3 re-eval (HANDOFF §5.1) — CLOSED, v2 stays deployed
+
+Same bridge cells (`outputs/eval_v3`, lora_v3 at corr/corr050/corrgate): the targeted saturation
+overshoot barely moves at full gain (sat 0.058 vs v2 0.066) while progression (latesim 0.848 vs
+0.813), quality, and seam pulse are all slightly worse; at the deploy points (0.5 / gate) v2
+dominates every axis, and low-gain composition already resolves saturation (0.013-0.019).
+No deploy point where v3 wins -> v2 remains the deployed LoRA.
