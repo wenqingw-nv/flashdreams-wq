@@ -26,10 +26,12 @@ rollouts + sbs are on disk but unscored. Verified numbers replace this note when
 1. Static suite: wait out the live generation (do not restart), then score
    {base, corr050, corrgate, corrgate050}, build sbs for all 8 scenes, re-issue the table verified.
 2. Score `eval_v3` (rollouts on disk) and re-issue the v2-vs-v3 verdict verified.
-3. **Owner verdicts** on: bridge sbs (`outputs/eval_sweep/sbs_*corrgate050*`), then the static demo
-   sbs + scene-7 entrance once real. → ship decision.
-4. **Owner call**: accept corrgate050's −23% dynamics on commanded motion (bridge cells), or sweep
-   gate×{0.55–0.7} for the knee (~3 h GPU).
+3. **Bridge OWNER EYEBALL: PASS (2026-07-21)** — corrgate050 "much better in progression, without
+   much pulling back or pulse issue" (both sbs comparisons). Confirmed for commanded motion; −23%
+   dynamics accepted; gate×{0.55–0.7} knee sweep NOT NEEDED unless the static suite objects.
+4. Ship decision waits only on the static suite (owner eyeball on its sbs once real). If static
+   confirms: corrgate050 = single ship config → REPORT.md deploy recommendation + LoRA merge
+   behind a runner flag.
 
 ## Next (after ship decision)
 
