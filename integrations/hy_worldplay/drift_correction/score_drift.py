@@ -154,10 +154,9 @@ def lag2s_identity(feats: torch.Tensor, lag: int = 2) -> float:
 
 CHUNK_FRAMES = 16
 """Decoded frames per AR chunk after the first: Wan's 4x temporal VAE maps
-4 latents -> 13 frames on the seed chunk, then 16 per chunk (381 = 13 +
-23*16 at 24 chunks), so boundaries sit at frame ``13 + 16k``. Verified on
-eval_sweep rollouts via motion autocorrelation (peak at lag 16; a 13-frame
-alignment smears the seam signal into the interior phases)."""
+the 4-latent seed chunk to 13 frames, then 16 per chunk (381 = 13 + 23*16
+at 24 chunks), so chunk boundaries sit at frame ``13 + 16k`` (per-frame
+motion autocorrelation peaks at lag 16)."""
 
 FIRST_CHUNK_FRAMES = 13
 """Decoded frames in the seed chunk (excluded from seam phase alignment)."""
@@ -166,11 +165,11 @@ FIRST_CHUNK_FRAMES = 13
 def seam_motion_ratio(frames: np.ndarray) -> float:
     """Motion at chunk-boundary transitions relative to chunk-interior motion.
 
-    Phase-aligns full-rate adjacent-frame diffs to the true decoded chunk
-    cadence (boundaries at frame ``13 + 16k``; seed chunk excluded) and
-    returns mean(boundary phases 0-1) / mean(interior phases 4-11). ~1.0 =
-    motion flows through the seams; above 1 = a boundary jump (anchoring
-    kick / statistics snap); below 1 = motion stalling at the seam.
+    Phase-aligns full-rate adjacent-frame diffs to the decoded chunk cadence
+    (boundaries at frame ``13 + 16k``; seed chunk excluded) and returns
+    mean(boundary phases 0-1) / mean(interior phases 4-11). ~1.0 = motion
+    flows through the seams; above 1 = a boundary jump (anchoring kick /
+    statistics snap); below 1 = motion stalling at the seam.
     """
     g = frames.astype(np.float32).mean(axis=-1)[:, ::2, ::2]
     mot = np.abs(np.diff(g, axis=0)).mean(axis=(1, 2))
@@ -187,9 +186,8 @@ def seam_sharpness_ratio(frames: np.ndarray) -> float:
 
     Variance-of-Laplacian per frame, phase-aligned to the decoded chunk
     cadence (chunk-initial frames at ``13 + 16k``; seed chunk excluded):
-    mean(phases 0-1) / mean(phases 6-13). Well below 1 = the post-boundary
-    blur the owner eyeballed on corrected rollouts (the corrector's
-    per-chunk kick committed to pixels on the chunk's first frames).
+    mean(phases 0-1) / mean(phases 6-13). Well below 1 = post-boundary blur
+    (structural detail loss on each chunk's first frames).
     """
     from scipy.ndimage import laplace
 
