@@ -46,3 +46,19 @@ metrics logged in `OWNER_FEEDBACK.md` and `outputs/*/scores.json`.
 v4 pass bar = advance-score ≈ base (0.58) at ≥ baseline quality plus standing guards (Δ ≥30% cut, dyn,
 sat, sharpness). Pass → deploy config + merge. Fail → deploy-config recommendation from the grid + failure
 analysis (loop-teacher bias, contraction stickiness) as the final deliverable.
+
+## 2026-07-21 owner eyeball on demo_static + eval_sweep (PRIORITY)
+
+Corrected videos show a chunk-cadence pulse + post-boundary blur that the BASE does not have
+(both static-bg and progression runs). Diagnosis: corrector-INDUCED here (unlike the Wan host
+where the base pulsed hardest): (1) correction is piecewise-constant per chunk (memory updates
+once per chunk) -> statistics jump at boundaries, visible against HY's boundary-clean base;
+(2) alpha*(t) is non-flat on this host (0.81@t1000 -> ~0.53 mid/low t) and the sweep ran UNGATED
+flat gain -> the non-systematic half of the target is injected at low-t steps, and the distilled
+4-step solver commits it nearly straight to pixels (worst on chunk-initial frames).
+
+Actions (deployment scope, in order):
+1. Rerun demo_static + one sweep point WITH the alpha*(t) gate (REPORT.md best row config).
+2. If a beat survives: correct only the first 1-2 high-t solver steps per chunk.
+3. Add a seam metric (boundary vs interior sharpness/luminance delta) per config; report
+   base / corr070 / gated side by side + sbs mp4s for owner eyeball.
