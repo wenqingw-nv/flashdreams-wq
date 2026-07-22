@@ -164,6 +164,17 @@ def main() -> None:
     pipe = build_pipeline(with_oneshot_encoders=True)
     device = pipe.device
 
+    if CORRECTOR_LORA:
+        from _lora import apply_lora, load_lora, unwrap_compiled
+        from eval_rollouts import install_alpha_gate
+
+        transformer = pipe.diffusion_model.transformer
+        network = unwrap_compiled(transformer.network)
+        apply_lora(network)
+        load_lora(network, CORRECTOR_LORA)
+        install_alpha_gate(transformer, network, {"gain": ("gate", 0.5)})
+        print(f"corrector active at gate x 0.5: {CORRECTOR_LORA}", flush=True)
+
     for c, item in enumerate(inputs):
         out = OUT_DIR / f"clip_{c:02d}.pt"
         if item is None:

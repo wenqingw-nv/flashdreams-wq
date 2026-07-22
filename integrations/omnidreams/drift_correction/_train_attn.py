@@ -51,6 +51,16 @@ from flashdreams.core.attention.kvcache import BlockKVCache
 _FUNCTIONAL = False
 """Process-wide toggle read by the patched forward."""
 
+_RECORD: list | None = None
+"""When a list, each functional self-attn forward appends its (k, v)
+projection pair (block order) — the grad-carrying KV of a "committed"
+chunk for the contraction term."""
+
+_INJECT: list | None = None
+"""When a list (block order), each functional forward swaps the LAST
+``chunk_size`` prefix tokens' K/V for the injected grad-carrying pair
+(numerically identical to the buffer twin written by the stock finalize)."""
+
 _STOCK_FORWARD = SelfAttention.forward
 """Original cache-writing forward, used whenever the toggle is off."""
 
@@ -106,10 +116,19 @@ def _functional_forward(
         q = _rope_half(q, rope_freqs)
         k = _rope_half(k, rope_freqs)
 
+    if _RECORD is not None:
+        _RECORD.append((k, v))
+
     write_start, _ = kv_cache._current_write_bounds()
     prefix = kv_cache._seq_slice(0, write_start)
-    keys = torch.cat([kv_cache._k[prefix], k], dim=-3)
-    vals = torch.cat([kv_cache._v[prefix], v], dim=-3)
+    pk, pv = kv_cache._k[prefix], kv_cache._v[prefix]
+    if _INJECT is not None:
+        ik, iv = _INJECT.pop(0)
+        span = ik.shape[-3]
+        pk = torch.cat([pk[..., :-span, :, :], ik], dim=-3)
+        pv = torch.cat([pv[..., :-span, :, :], iv], dim=-3)
+    keys = torch.cat([pk, k], dim=-3)
+    vals = torch.cat([pv, v], dim=-3)
 
     out = self.attn_op(q, keys, vals)
     return self.output_proj(out.reshape(batch_shape + (L, n * d)))
@@ -130,3 +149,32 @@ def functional_attention():
         yield
     finally:
         _FUNCTIONAL = prev
+
+
+@contextlib.contextmanager
+def record_kv(store: list):
+    """Record each block's grad-carrying (k, v) during one forward."""
+    global _RECORD
+    prev = _RECORD
+    _RECORD = store
+    try:
+        yield
+    finally:
+        _RECORD = prev
+
+
+@contextlib.contextmanager
+def inject_kv(kvs: list):
+    """Swap the committed chunk's buffered KV for grad-carrying twins.
+
+    ``kvs`` must be the block-ordered list from :func:`record_kv`, and the
+    buffer's corresponding slots must hold the numerically identical
+    no-grad twins (same inputs through the stock finalize write).
+    """
+    global _INJECT
+    prev = _INJECT
+    _INJECT = list(kvs)
+    try:
+        yield
+    finally:
+        _INJECT = prev

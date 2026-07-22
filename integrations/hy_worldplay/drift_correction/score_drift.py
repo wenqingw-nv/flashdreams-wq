@@ -41,7 +41,7 @@ EVAL_DIR = Path(
         "EVAL_OUT", "integrations/hy_worldplay/drift_correction/outputs/eval"
     )
 )
-FRAME_STRIDE = 13
+FRAME_STRIDE = int(os.environ.get("FRAME_STRIDE", "13"))
 """Score every 13th frame (one per AR chunk at the decoded rate)."""
 
 DINO_FPS = 1.0
@@ -151,13 +151,13 @@ def lag2s_identity(feats: torch.Tensor, lag: int = 2) -> float:
     return float((feats[:-lag] * feats[lag:]).sum(-1).mean())
 
 
-CHUNK_FRAMES = 16
+CHUNK_FRAMES = int(os.environ.get("CHUNK_FRAMES", "16"))
 """Decoded frames per AR chunk after the first: Wan's 4x temporal VAE maps
 the 4-latent seed chunk to 13 frames, then 16 per chunk (381 = 13 + 23*16
 at 24 chunks), so chunk boundaries sit at frame ``13 + 16k`` (per-frame
 motion autocorrelation peaks at lag 16)."""
 
-FIRST_CHUNK_FRAMES = 13
+FIRST_CHUNK_FRAMES = int(os.environ.get("FIRST_CHUNK_FRAMES", "13"))
 """Decoded frames in the seed chunk (excluded from seam phase alignment)."""
 
 
@@ -177,7 +177,8 @@ def seam_motion_ratio(frames: np.ndarray) -> float:
     if n < 2 * CHUNK_FRAMES:
         return float("nan")
     phases = seg[:n].reshape(-1, CHUNK_FRAMES).mean(axis=0)
-    return float(phases[:2].mean() / (phases[4:12].mean() + 1e-9))
+    interior = phases[CHUNK_FRAMES // 4 : CHUNK_FRAMES * 3 // 4]
+    return float(phases[:2].mean() / (interior.mean() + 1e-9))
 
 
 def seam_sharpness_ratio(frames: np.ndarray) -> float:
@@ -196,7 +197,8 @@ def seam_sharpness_ratio(frames: np.ndarray) -> float:
     if n < 2 * CHUNK_FRAMES:
         return float("nan")
     phases = sharp[:n].reshape(-1, CHUNK_FRAMES).mean(axis=0)
-    return float(phases[:2].mean() / (phases[6:14].mean() + 1e-9))
+    interior = phases[CHUNK_FRAMES * 3 // 8 : CHUNK_FRAMES * 7 // 8]
+    return float(phases[:2].mean() / (interior.mean() + 1e-9))
 
 
 def cut_count(frames: np.ndarray) -> int:

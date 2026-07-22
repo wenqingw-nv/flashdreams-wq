@@ -62,6 +62,18 @@ class LoRALinear(nn.Module):
         return out
 
 
+def unwrap_compiled(network: object) -> nn.Module:
+    """Return the eager module behind a ``torch.compile`` wrapper, if any.
+
+    Accepts ``object``: the DiT lives on the transformer as a plain
+    attribute, which the type checker resolves through ``nn.Module``'s
+    ``__getattr__`` union.
+    """
+    inner = getattr(network, "_orig_mod", network)
+    assert isinstance(inner, nn.Module), type(inner)
+    return inner
+
+
 def apply_lora(
     model: nn.Module,
     rank: int = 16,
