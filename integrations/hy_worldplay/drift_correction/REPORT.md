@@ -5,6 +5,25 @@ SPDX-License-Identifier: Apache-2.0
 
 # Drift correction on FlashDreams HY-WorldPlay — results report (2026-07-16)
 
+## 2026-07-22 content-diversification round (v2c2) — kill bar PASSED
+
+Continue-train from v2: 200 steps @ 1e-4 on the aggregated pool with the 8
+card-image clips (3 person scenes) at **10% draw weight** (the first
+attempt trained 600 steps with uniform-over-pools sampling = 25% weight and
+diluted the bridge Delta-cut to ~0%; retry fixed both). Checkpoint
+``outputs/lora_v2c2.pt`` (+ step-tagged snapshots).
+
+| cell | base Delta | v2c2 Delta | cut | MUSIQ delta | dyn |
+|---|---|---|---|---|---|
+| bridge (3-pose avg) | +0.96 | +0.40 | **-58%** | +2.1 | ~base |
+| e_person (walking child) | +8.79 | +4.64 | **-47%** | +5.4 | -14% |
+| b_strafe | +2.86 | +1.97 | -31% | +1.4 | ~base |
+| a_turn | -0.95 | -1.56 | further negative | +1.9 | -14% |
+
+Final gate: owner eyeball on the person-scene sbs (blur/morph verdict),
+``outputs/eval_v2c2_e_person/sbs_base_LEFT_vs_corrgate050_RIGHT_*.mp4``.
+If it passes, v2c2 becomes the deployed motion-job LoRA (supersedes v2).
+
 ## 2026-07-22 OOD generalization (model-card scenes) + owner verdict
 
 Four commanded-motion cells on official HY card images (yaw-turn/Zelda,
