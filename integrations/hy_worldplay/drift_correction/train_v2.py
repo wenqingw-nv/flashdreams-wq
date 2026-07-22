@@ -119,7 +119,7 @@ narrowed target set cannot init from a full-target checkpoint."""
 GRAD_CLIP = 1.0
 RANK = 16
 EVAL_EVERY = 100
-SAVE_EVERY = 200
+SAVE_EVERY = int(os.environ.get("SAVE_EVERY", "200"))
 CLEAN_LAP = 1
 SEED = int(os.environ.get("SEED", "0"))
 
@@ -132,6 +132,17 @@ def main() -> None:
 
     t_probs = np.array(T_WEIGHTS, dtype=np.float64)
     t_probs = t_probs / t_probs.sum()
+
+    # Per-pool draw probabilities; default = the historical uniform-over-
+    # pools behavior. POOL_WEIGHTS=0.3,0.3,0.3,0.1 rebalances.
+    pw = os.environ.get("POOL_WEIGHTS", "")
+    pool_probs = (
+        np.array([float(w) for w in pw.split(",")], dtype=np.float64)
+        if pw
+        else np.ones(len(pools), dtype=np.float64)
+    )
+    assert len(pool_probs) == len(pools), (pool_probs, len(pools))
+    pool_probs = pool_probs / pool_probs.sum()
 
     meta = torch.load(pools[0][0], map_location="cpu", weights_only=False)
     runner = build_runner(
@@ -341,7 +352,7 @@ def main() -> None:
         for pg in opt.param_groups:
             pg["lr"] = LR * min(1.0, step / WARMUP)
         opt.zero_grad()
-        pool_id = int(rng.integers(len(pools)))
+        pool_id = int(rng.choice(len(pools), p=pool_probs))
         c = int(rng.choice(train_ids))
         # Backwards happen inside sample_losses (two-phase; grads
         # accumulate into .grad).
@@ -358,6 +369,8 @@ def main() -> None:
             )
         if step % SAVE_EVERY == 0 or step == STEPS:
             save_lora(network, CKPT)
+            if os.environ.get("SNAPSHOT_STEPS"):
+                save_lora(network, CKPT.with_name(f"{CKPT.stem}_step{step}.pt"))
 
     vl = val_loss(16)
     print(
