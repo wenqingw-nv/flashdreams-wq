@@ -44,13 +44,19 @@ LORA = os.environ.get("LORA", str(_BASE / "outputs/lora_v1_pilot.pt"))
 NUM_CHUNK = int(os.environ.get("NUM_CHUNK", "40"))
 """Rollout horizon (40 chunks = 160 latents = ~32s at 16 fps)."""
 
-POSES = (
-    "w-40, right-3, w-40, left-3, w-73",
-    "w-30, d-10, w-30, a-10, w-79",
-    "w-60, right-2, w-50, right-2, w-45",
+POSES = tuple(
+    p.strip()
+    for p in os.environ.get(
+        "POSES",
+        "w-40, right-3, w-40, left-3, w-73;"
+        "w-30, d-10, w-30, a-10, w-79;"
+        "w-60, right-2, w-50, right-2, w-45",
+    ).split(";")
+    if p.strip()
 )
-"""Non-loop eval trajectories (159 steps each = ``NUM_CHUNK * 4 - 1``);
-distinct from the training strafe loops."""
+"""Non-loop eval trajectories, ``;``-separated via the ``POSES`` env var
+(each must cover ``NUM_CHUNK * 4 - 1`` motion steps); the defaults are the
+bridge cells, distinct from the training strafe loops."""
 
 IMAGES_DIR = os.environ.get("IMAGES_DIR", "")
 """Held-out first frames; empty -> the upstream sample image."""
@@ -84,6 +90,8 @@ def main() -> None:
     # alpha*(t)-gated row, ``TGATE=1,0.5`` also the gate x 0.5 composition
     # (``corrgate050``).
     configs: dict[str, float | tuple[str, float]] = {"base": 0.0, "corr": 1.0}
+    if os.environ.get("SKIP_FULL"):
+        del configs["corr"]
     for g in os.environ.get("GAINS", "").split(","):
         if g.strip():
             configs[f"corr{float(g):.2f}".replace(".", "")] = float(g)
