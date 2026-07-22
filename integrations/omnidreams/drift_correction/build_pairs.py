@@ -80,8 +80,13 @@ LAPS = 16
 NUM_CHUNK = 1 + LAP_CHUNKS * LAPS
 """Chunk 0 (image-anchored, 5 frames) + the tiled laps."""
 
-NOISE_SEED = 5042
+NOISE_SEED = int(os.environ.get("NOISE_SEED", "5042"))
 """Diffusion RNG seed per rollout (offset by clip index)."""
+
+CORRECTOR_LORA = os.environ.get("CORRECTOR_LORA", "")
+"""Optional v1 checkpoint; when set, rollouts run with the corrector at the
+deploy dial (per-step ``alpha*(t) x 0.5``) so the DAgger pool reflects the
+states the deployed corrector actually visits."""
 
 
 def _list_sample_uuids(n: int) -> list[str]:
