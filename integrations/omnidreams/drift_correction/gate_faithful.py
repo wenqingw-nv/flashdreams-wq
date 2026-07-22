@@ -62,11 +62,11 @@ OUT_PATH = Path(
 )
 """Aggregated per-timestep and per-depth results."""
 
-PROBE_CHUNKS = (14, 24, 39, 54, 69, 79)
-"""Probe chunks spanning ~3.9 s to ~21.4 s of rollout. All satisfy
+PROBE_CHUNKS = (24, 39, 54, 69, 79)
+"""Probe chunks spanning ~6.6 s to ~21.4 s of rollout. All satisfy
 ``(k - 1) % LAP_CHUNKS >= 3`` so the 3-chunk KV window lies inside one lap
-(no conditioning-teleport contamination), and all sit in laps >= 2 so the
-window content differs from its lap-1 clean counterpart."""
+(no conditioning-teleport contamination), and all sit in laps >= 4 (owner
+decision 2026-07-22: drifted side well past the lap-2 clean reference)."""
 
 WINDOW_CHUNKS = 3
 """KV-window span in chunks (``window_size_t=6`` / ``len_t=2``)."""
@@ -74,10 +74,10 @@ WINDOW_CHUNKS = 3
 M_NOISE = 8
 """Noise seeds per (clip, chunk, timestep) cell."""
 
-CLEAN_LAP = 1
-"""Lap supplying the clean counterpart content. Lap 0 contains the
-image-anchored chunk 0 (different distribution), matching the HY port's
-choice."""
+CLEAN_LAP = 2
+"""Lap supplying the clean counterpart content (owner decision 2026-07-22:
+lap 2, keeping the synthetic-seed transition tail of laps 0-1 out of the
+clean reference; the 2026-07-22 GO gate ran with lap 1)."""
 
 
 def lap_aligned(k: int, lap_chunks: int) -> int:

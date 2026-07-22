@@ -1,0 +1,342 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""v1 corrector trainer: counterfactual clean-history teacher in velocity space.
+
+Trains the LoRA corrector r_phi on the frozen distilled Omnidreams model so
+its velocity prediction under drifted history matches the frozen model's
+prediction under the lap-aligned clean history at the same ``z_t``::
+
+    L = ||v_{theta+LoRA}(z_t, h_gen, t) - v_theta(z_t, h_clean, t)||^2
+        / ||v_theta(z_t, h_clean, t) - v_theta(z_t, h_gen, t)||^2
+
+The drift-gap denominator is required (raw MSE diverges; reference
+finding); ``R^2 = 1 - L``. Both passes share the exact ``z_t`` re-noised
+from the rollout's own x0 (native anchoring). Timesteps are sampled from
+the 2 distillation steps with probability proportional to the measured
+``alpha*(t)`` (0.97 @ t=1000, 0.75 @ t=803).
+
+Host adaptations vs the HY reference (``hy_worldplay`` ``train_v1.py``):
+velocity-space targets; history rebuilt per sample by a truncated
+forged-index replay (:data:`REPLAY_CHUNKS` warmup chunks -- deep-layer KV
+entangles history, so a bare window replay is NOT equivalent; checked
+numerically at startup); functional self-attention toggle
+(:mod:`_train_attn`) for the grad-carrying probe. Owner decisions
+2026-07-22: clean reference = lap 2, training cells in laps >= 4,
+checkpoints every <= 200 steps with RESUME.
+
+Run from the repo root (resumable: re-run the same command)::
+
+    STEPS=1500 .venv/bin/python integrations/omnidreams/drift_correction/train_v1.py
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import numpy as np
+import torch
+from _host import build_pipeline, load_clip, reset_history
+from _lora import apply_lora, lora_parameters, save_lora, set_lora_scale
+from _train_attn import functional_attention, patch_functional_attention
+from torch import Tensor
+
+## Training configuration
+
+BASE = Path("integrations/omnidreams/drift_correction")
+
+PAIRS_DIR = Path(os.environ.get("PAIRS_DIR", str(BASE / "outputs/pairs")))
+"""Clip files from ``build_pairs.py``."""
+
+CKPT = Path(os.environ.get("CKPT", str(BASE / "outputs/lora_v1.pt")))
+"""Output checkpoint (LoRA + optimizer + step); saved every ``SAVE_EVERY``."""
+
+STEPS = int(os.environ.get("STEPS", "1500"))
+LR = float(os.environ.get("LR", "5e-4"))
+WARMUP = 60
+"""Linear LR warmup steps; required for stability (reference finding)."""
+
+GRAD_CLIP = 1.0
+RANK = 16
+EVAL_EVERY = 100
+SAVE_EVERY = 200
+"""Owner requirement: partial checkpoints every <= 200 steps (box wedges)."""
+
+CLEAN_LAP = 2
+"""Owner decision 2026-07-22: lap 2 supplies the clean reference (keeps the
+synthetic-seed transition tail of laps 0-1 out of it)."""
+
+MIN_LAP = 4
+"""Training cells live in laps >= 4 (drifted side well past the clean lap)."""
+
+REPLAY_CHUNKS = 9
+"""History chunks replayed before a probe. The KV cache holds only 3
+chunks, but deep-layer K/V entangle earlier history (each replayed chunk's
+projections depend on what that forward attended to), so a bare window
+replay diverges from the rollout state (rel 0.034 measured). The error
+decays with warmup depth and hits the bf16 floor at 9 chunks (rel ~0.005,
+1-2% of the drift-gap signal); measured on this host 2026-07-22."""
+
+ALPHA_STAR = (0.97, 0.75)
+"""Measured unbiased alpha* per solver timestep (t=1000, t=803); used as
+the timestep sampling weights."""
+
+N_VAL_CLIPS = 1
+SEED = int(os.environ.get("SEED", "0"))
+
+
+def lap_aligned(c: int, lap_chunks: int) -> int:
+    """Map chunk ``c`` (>= lap 1) to its lap-:data:`CLEAN_LAP` counterpart."""
+    assert c >= 1, "chunk 0 is image-anchored and never remapped"
+    return 1 + CLEAN_LAP * lap_chunks + (c - 1) % lap_chunks
+
+
+def training_ks(num_chunk: int, lap_chunks: int, laps: int) -> list[int]:
+    """All probe chunks in laps >= MIN_LAP.
+
+    Every lap position is usable: the clean swap maps each replayed chunk
+    to its lap-2 counterpart *by position*, so both branches share the lap
+    cycle's boundary structure (including the conditioning teleport) and
+    differ only in content cleanliness.
+    """
+    return [k for k in range(1 + MIN_LAP * lap_chunks, num_chunk)]
+
+
+def main() -> None:
+    clips = sorted(PAIRS_DIR.glob("clip_*.pt"))
+    assert clips, f"no clips under {PAIRS_DIR}; run build_pairs.py first"
+    rng = np.random.default_rng(SEED)
+
+    pipe = build_pipeline(with_oneshot_encoders=False)
+    device = pipe.device
+    dtype = torch.bfloat16
+    transformer = pipe.diffusion_model.transformer
+    scheduler = pipe.diffusion_model.scheduler
+    timesteps = scheduler.denoising_step_list
+    sigmas = scheduler.denoising_sigmas
+    n_steps = timesteps.shape[0]
+    t_probs = np.array(ALPHA_STAR[:n_steps]) / sum(ALPHA_STAR[:n_steps])
+    ctx_t = torch.tensor(
+        float(pipe.diffusion_model.config.context_noise), device=device, dtype=dtype
+    )
+
+    datas = [load_clip(p, "cpu", dtype) for p in clips]
+    lap_chunks, laps, num_chunk = (
+        datas[0]["lap_chunks"],
+        datas[0]["laps"],
+        datas[0]["num_chunk"],
+    )
+    ks = training_ks(num_chunk, lap_chunks, laps)
+    train_ids = list(range(len(datas) - N_VAL_CLIPS))
+    val_ids = list(range(len(datas) - N_VAL_CLIPS, len(datas)))
+    print(
+        f"{len(datas)} clips ({len(val_ids)} val) | {len(ks)} cells/clip "
+        f"(k {ks[0]}..{ks[-1]}, laps >= {MIN_LAP}, clean lap {CLEAN_LAP})",
+        flush=True,
+    )
+
+    # All clips share the prompt and probes never touch chunk 0, so one
+    # cache (cross-attn text KV + rope + masks) serves every clip.
+    emb = datas[0]["embeddings"]
+    cache = pipe.initialize_cache_from_embeddings(
+        text_embeddings=emb["text_embeddings"],
+        image_embeddings=emb["image_embeddings"],
+    )
+    tc = cache.transformer_cache
+
+    network = transformer.network
+    wrapped = apply_lora(network, rank=RANK)
+    params = lora_parameters(network)
+    print(
+        f"LoRA on {len(wrapped)} projections | "
+        f"{sum(p.numel() for p in params) / 1e6:.2f}M params",
+        flush=True,
+    )
+    patch_functional_attention()
+    opt = torch.optim.AdamW(params, lr=LR)
+
+    start_step = 0
+    if CKPT.exists():
+        state = torch.load(CKPT, map_location="cpu", weights_only=False)
+        for i, p in enumerate(params):
+            p.data.copy_(state["lora"][i].to(p.device, p.dtype))
+        opt.load_state_dict(state["opt"])
+        start_step = state["step"]
+        rng = np.random.default_rng(state["rng_seed"])
+        print(f"RESUMED from {CKPT} at step {start_step}", flush=True)
+
+    def save(step: int) -> None:
+        tmp = CKPT.with_suffix(".tmp")
+        torch.save(
+            {
+                "lora": {i: p.detach().cpu() for i, p in enumerate(params)},
+                "opt": opt.state_dict(),
+                "step": step,
+                "rng_seed": SEED + step,  # fresh stream on resume
+            },
+            tmp,
+        )
+        tmp.replace(CKPT)
+
+    _device_clips: dict[int, dict] = {}
+
+    def to_device(c: int) -> dict:
+        """Device-resident view of clip ``c`` (memoized; ~0.3 GB per clip)."""
+        if c not in _device_clips:
+            _device_clips[c] = {
+                key: ([x.to(device) for x in v] if isinstance(v, list) else v)
+                for key, v in datas[c].items()
+                if key in ("latents", "hdmaps", "lap_chunks", "num_chunk")
+            }
+        return _device_clips[c]
+
+    def replay_window(latents: list[Tensor], hdmaps: list[Tensor], k: int) -> None:
+        """Rebuild the KV state from chunks ``k - REPLAY_CHUNKS .. k - 1``.
+
+        Forged-index truncated replay at original absolute indices (RoPE
+        preserved) on a reset cache whose ``_prev_chunk_idx`` is set so the
+        ``BlockKVCache`` contiguity assert passes. Context-noise eps is
+        seeded per absolute index, shared across branches.
+        """
+        start = max(0, k - REPLAY_CHUNKS)
+        reset_history(tc)
+        for bc in tc.network_cache.block_caches:
+            bc.self_attn._prev_chunk_idx = start - 1
+        for j in range(start, k):
+            g = torch.Generator(device=device).manual_seed(77_000 + j)
+            noisy = scheduler.add_noise(latents[j], ctx_t, rng=g)
+            tc.start(j)
+            transformer.finalize_kv_cache(
+                noisy_latent=noisy, timestep=ctx_t, cache=tc, input=hdmaps[j]
+            )
+            tc.finalize(j)
+
+    def predict_v(z_t: Tensor, t_idx: int, hdmap: Tensor) -> Tensor:
+        t = timesteps[t_idx].to(device=device, dtype=dtype)
+        with functional_attention():
+            flow = transformer.predict_flow(
+                noisy_latent=z_t, timestep=t, cache=tc, input=hdmap
+            )
+        return flow.float()
+
+    def sample_losses(
+        c: int, grad: bool, rng_: np.random.Generator
+    ) -> tuple[Tensor, Tensor]:
+        """One drift-pair sample -> (normalized v-space loss, r_target sq-norm)."""
+        d = to_device(c)
+        k = int(rng_.choice(ks))
+        t_idx = int(rng_.choice(n_steps, p=t_probs))
+        gen = d["latents"]
+        clean = list(gen)
+        for j in range(max(1, k - REPLAY_CHUNKS), k):
+            clean[j] = gen[lap_aligned(j, lap_chunks)]
+        x0 = gen[k]
+        sig = sigmas[t_idx].to(dtype)
+        g = torch.Generator(device=device).manual_seed(int(rng_.integers(2**31)))
+        z_t = (1 - sig) * x0 + sig * torch.randn(
+            x0.shape, device=device, dtype=dtype, generator=g
+        )
+
+        with torch.no_grad():
+            set_lora_scale(network, 0.0)
+            replay_window(clean, d["hdmaps"], k)
+            tc.start(k)
+            v_clean = predict_v(z_t, t_idx, d["hdmaps"][k])
+            tc.finalize(k)
+            replay_window(gen, d["hdmaps"], k)
+            tc.start(k)
+            v_base = predict_v(z_t, t_idx, d["hdmaps"][k])
+            tc.finalize(k)
+        r_target_sq = (v_clean - v_base).square().sum()
+
+        set_lora_scale(network, 1.0)
+        with torch.no_grad():
+            replay_window(gen, d["hdmaps"], k)  # LoRA-scaled replay, no grad
+        tc.start(k)
+        with torch.enable_grad() if grad else torch.no_grad():
+            v_corr = predict_v(z_t, t_idx, d["hdmaps"][k])
+            loss = (v_corr - v_clean).square().sum() / (r_target_sq + 1e-8)
+        tc.finalize(k)
+        return loss, r_target_sq
+
+    @torch.no_grad()
+    def val_r2(n: int = 12) -> float:
+        vrng = np.random.default_rng(1234)  # fixed cells/noise across evals
+        s = 0.0
+        for _ in range(n):
+            loss, _ = sample_losses(int(vrng.choice(val_ids)), False, vrng)
+            s += loss.item()
+        return 1 - s / n
+
+    def replay_equivalence_check() -> None:
+        """Assert the forged-index window replay matches a full-prefix replay."""
+        d = to_device(0)
+        k = ks[0]
+        g = torch.Generator(device=device).manual_seed(1)
+        z_t = (1 - sigmas[0].to(dtype)) * d["latents"][k] + sigmas[0].to(
+            dtype
+        ) * torch.randn(d["latents"][k].shape, device=device, dtype=dtype, generator=g)
+        set_lora_scale(network, 0.0)
+        with torch.no_grad():
+            replay_window(d["latents"], d["hdmaps"], k)
+            tc.start(k)
+            v_win = predict_v(z_t, 0, d["hdmaps"][k])
+            tc.finalize(k)
+            reset_history(tc)
+            for j in range(k):
+                gg = torch.Generator(device=device).manual_seed(77_000 + j)
+                noisy = scheduler.add_noise(d["latents"][j], ctx_t, rng=gg)
+                tc.start(j)
+                transformer.finalize_kv_cache(
+                    noisy_latent=noisy, timestep=ctx_t, cache=tc, input=d["hdmaps"][j]
+                )
+                tc.finalize(j)
+            tc.start(k)
+            v_full = predict_v(z_t, 0, d["hdmaps"][k])
+            tc.finalize(k)
+        rel = ((v_win - v_full).norm() / (v_full.norm() + 1e-9)).item()
+        print(f"replay equivalence: rel diff {rel:.2e}", flush=True)
+        assert rel < 1e-2, "truncated replay too far from full-prefix replay"
+
+    replay_equivalence_check()
+
+    torch.set_grad_enabled(True)
+    for step in range(start_step + 1, STEPS + 1):
+        for pg in opt.param_groups:
+            pg["lr"] = LR * min(1.0, step / WARMUP)
+        opt.zero_grad()
+        loss, rt_sq = sample_losses(int(rng.choice(train_ids)), True, rng)
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(params, GRAD_CLIP)
+        opt.step()
+        if step % EVAL_EVERY == 0 or step == 1:
+            print(
+                f"step {step:5d} | loss {loss.item():.4f}"
+                f" (train R^2 {1 - loss.item():+.3f})"
+                f" | val R^2 {val_r2():+.3f} | |r_t|^2 {rt_sq.item():.1f}",
+                flush=True,
+            )
+        if step % SAVE_EVERY == 0 or step == STEPS:
+            save(step)
+
+    print(f"TRAIN-V1-DONE | final val R^2 {val_r2(24):+.3f} | saved {CKPT}", flush=True)
+
+
+if __name__ == "__main__":
+    main()
