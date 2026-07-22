@@ -8,6 +8,38 @@ SPDX-License-Identifier: Apache-2.0
 *2026-07-22, owner-approved direction: retrain the LoRA per base model for now; these notes record
 the library shape and the pretrain→post-train idea for when they're wanted.*
 
+## 0. The library at a glance
+
+```
+                        FlashDreams model (host)
+                                  |
+                  host adapter  (per model, ~3 functions)
+        capture_rollout(runner)  ·  predict(z_t, t, history, ctrl)  ·  lora_targets
+                                  |
+        =========== host-agnostic core (one code path) ===========
+                                  |
+        [1] GATE  -- alpha*(t) step-0 diagnostic  (~1 GPU-day)
+             |    mean rel gap < 0.01 ......... nothing to correct -> STOP
+             |    alpha* below bar ............ report before training
+             |    alpha*(t) non-flat .......... gate dial will exist at deploy
+             v  GO
+        [2] PAIRS -- clean vs drifted histories at matched states
+             |    (pose-loop counterfactuals | generic prefix rollouts)
+             v
+        [3] TRAIN r_phi -- LoRA r16 q/k/v/o on the FROZEN host
+             |    v1: gap-normalized counterfactual loss
+             |    v2: + DAgger pool + drift-contraction (w=0.5)
+             v
+        [4] SCORE + OWNER EYEBALL -- drift/dyn/seam suite, sbs mp4s
+             |    dial sweep: gain g x {1, alpha*(t) gate, gate x g}
+             |    eyeball outranks instruments; kill bars pre-stated
+             v
+        [5] DEPLOY -- runner hook
+                  content-keyed:  commanded motion -> r_phi @ chosen dial
+                                  static / no drift -> corrector OFF
+                  (per-step gate => unfused LoRA ~0.3%; else merge = zero cost)
+```
+
 ## 1. Library: host adapter + host-agnostic core
 
 Everything in this port generalizes except three functions. Target shape (first consumer:
