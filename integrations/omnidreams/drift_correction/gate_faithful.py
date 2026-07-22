@@ -35,6 +35,7 @@ Run after ``build_pairs.py`` from the flashdreams repo root::
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -54,11 +55,18 @@ from torch import Tensor
 
 ## Gate configuration
 
-PAIRS_DIR = Path("integrations/omnidreams/drift_correction/outputs/pairs")
+PAIRS_DIR = Path(
+    os.environ.get(
+        "PAIRS_DIR", "integrations/omnidreams/drift_correction/outputs/pairs_v2"
+    )
+)
 """Clip files from ``build_pairs.py``."""
 
 OUT_PATH = Path(
-    "integrations/omnidreams/drift_correction/outputs/gate/gate_faithful.json"
+    os.environ.get(
+        "GATE_OUT",
+        "integrations/omnidreams/drift_correction/outputs/gate/gate_faithful_v2.json",
+    )
 )
 """Aggregated per-timestep and per-depth results."""
 

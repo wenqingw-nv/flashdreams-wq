@@ -178,6 +178,24 @@ def capture_rollout(
 ## Counterfactual x0 probes
 
 
+@torch.no_grad()
+def swap_text_kv(
+    network, tc: CosmosTransformerCache, text_embeddings: Tensor
+) -> None:
+    """Swap the per-block cross-attention (text) KV for another clip's prompt.
+
+    Mirrors the cross-attn half of ``CosmosDiTNetwork.initialize_cache`` so
+    one long-lived transformer cache (rope, masks, rolling self-attn
+    buffers) can serve clips with different prompts.
+    """
+    w = network.blocks[0].cross_attn.k_proj.weight
+    ctx = text_embeddings.to(device=w.device, dtype=w.dtype)
+    if network.config.use_crossattn_projection:
+        ctx = network.crossattn_proj(ctx)
+    for block, bc in zip(network.blocks, tc.network_cache.block_caches):
+        bc.cross_attn = block.cross_attn.initialize_cache(ctx)
+
+
 def reset_history(tc: CosmosTransformerCache) -> None:
     """Reset the rolling self-attention KV caches to the empty state.
 

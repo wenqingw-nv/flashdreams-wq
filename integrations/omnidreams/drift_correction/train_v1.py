@@ -52,8 +52,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
 import torch
-from _host import build_pipeline, load_clip, reset_history
-from _lora import apply_lora, lora_parameters, save_lora, set_lora_scale
+from _host import build_pipeline, load_clip, reset_history, swap_text_kv
+from _lora import apply_lora, lora_parameters, set_lora_scale
 from _train_attn import functional_attention, patch_functional_attention
 from torch import Tensor
 
@@ -61,8 +61,8 @@ from torch import Tensor
 
 BASE = Path("integrations/omnidreams/drift_correction")
 
-PAIRS_DIR = Path(os.environ.get("PAIRS_DIR", str(BASE / "outputs/pairs")))
-"""Clip files from ``build_pairs.py``."""
+PAIRS_DIR = Path(os.environ.get("PAIRS_DIR", str(BASE / "outputs/pairs_v2")))
+"""Clip files from ``build_pairs.py`` (v2: real-photo-seeded rollouts)."""
 
 CKPT = Path(os.environ.get("CKPT", str(BASE / "outputs/lora_v1.pt")))
 """Output checkpoint (LoRA + optimizer + step); saved every ``SAVE_EVERY``."""
@@ -151,14 +151,22 @@ def main() -> None:
         flush=True,
     )
 
-    # All clips share the prompt and probes never touch chunk 0, so one
-    # cache (cross-attn text KV + rope + masks) serves every clip.
+    # One long-lived cache (rope, masks, rolling self-attn buffers) serves
+    # every clip; probes never touch chunk 0 (image), and the per-clip
+    # prompt is handled by swapping the cross-attn text KV on clip switch.
     emb = datas[0]["embeddings"]
     cache = pipe.initialize_cache_from_embeddings(
         text_embeddings=emb["text_embeddings"],
         image_embeddings=emb["image_embeddings"],
     )
     tc = cache.transformer_cache
+    _text_clip = [0]
+
+    def use_clip_text(c: int) -> None:
+        """Swap the cross-attn text KV when the sampled clip changes."""
+        if _text_clip[0] != c:
+            swap_text_kv(network, tc, datas[c]["embeddings"]["text_embeddings"])
+            _text_clip[0] = c
 
     network = transformer.network
     wrapped = apply_lora(network, rank=RANK)
@@ -239,6 +247,7 @@ def main() -> None:
         c: int, grad: bool, rng_: np.random.Generator
     ) -> tuple[Tensor, Tensor]:
         """One drift-pair sample -> (normalized v-space loss, r_target sq-norm)."""
+        use_clip_text(c)
         d = to_device(c)
         k = int(rng_.choice(ks))
         t_idx = int(rng_.choice(n_steps, p=t_probs))

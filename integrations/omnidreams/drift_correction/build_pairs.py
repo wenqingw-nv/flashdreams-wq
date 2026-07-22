@@ -13,33 +13,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tiled-HDMap loop rollouts: drifted-vs-clean pair clips for Omnidreams.
+"""Tiled-HDMap loop rollouts: drifted-vs-clean pair clips for Omnidreams (v2).
 
 The Omnidreams action grammar is the HDMap conditioning video, so the
 strafe-loop trick ports as *HDMap tiling*: the rollout conditioning is
 ``clip[:5] + tile(clip[5 : 5 + 8 * LAP_CHUNKS], LAPS)`` — every lap's chunk
 ``i`` consumes pixel-identical HDMap frames, so a late (drifted) chunk's
-KV-window content can be swapped for its lap-1 (clean) counterparts at the
-same conditioning and the same RoPE positions. The lap boundary is a
-conditioning teleport (a smooth loop would need re-rendering a loop
-trajectory through the ludus renderer — noted, not built); the gate only
-probes chunks whose 3-chunk window lies inside one lap.
+KV-window content can be swapped for its lap-aligned clean counterparts at
+the same conditioning and the same RoPE positions. The lap boundary is a
+conditioning teleport; probes/training only use chunks whose surviving
+window lies inside one lap (gate) or map counterfactuals by lap position
+(training). Rollouts run ~21.5 s (81 chunks) because this host's residual
+drift shows late.
 
-Rollouts run ~21.5 s (81 chunks) because this host's drift shows late
-(OmniDreams' own segmented FVD degrades over 20 s despite Self-Forcing
-training + sinks); the gate reports the gap as a function of depth.
-
-Assets: local benchmarking corpus (48 scenarios, authentic ludus-rendered
-HDMap @ 704x1280x48 frames + first frame). The HF sample dataset is gated
-and this box has no token.
+v2 (owner flag 2026-07-22): pairs v1 seeded rollouts with the local
+benchmarking corpus, whose "first frames" are HDMap renders — the rollouts
+stayed in a render-adjacent régime and collapsed to one scene. v2 sources
+the gated HF sample set (``nvidia/omni-dreams-samples``): 32 clips with
+REAL dashcam first frames, per-clip prompts, and 80 s authentic HDMaps.
+Requires an authenticated HF token.
 
 Run from the flashdreams repo root::
 
-    .venv/bin/python integrations/omnidreams/drift_correction/build_pairs.py
+    HF_TOKEN=$(cat ~/.cache/huggingface/token) \
+        .venv/bin/python integrations/omnidreams/drift_correction/build_pairs.py
 """
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -50,6 +52,7 @@ from _host import build_pipeline, capture_rollout, save_clip
 from omnidreams.runner import (
     DEFAULT_VIDEO_HEIGHT,
     DEFAULT_VIDEO_WIDTH,
+    _ensure_hf_single_view_example_data_synced,
     _load_first_frame,
     _load_video,
     _write_video,
@@ -57,38 +60,19 @@ from omnidreams.runner import (
 
 ## Pair-build configuration
 
-OUT_DIR = Path("integrations/omnidreams/drift_correction/outputs/pairs")
-"""Clip files consumed by ``gate_faithful.py``."""
-
-SCENARIO_DIR = Path(
-    "/localhome/local-wenqingw/projs/benchmarking/corpus_v0/scenarios"
+OUT_DIR = Path(
+    os.environ.get(
+        "PAIRS_DIR", "integrations/omnidreams/drift_correction/outputs/pairs_v2"
+    )
 )
-"""Local scenario corpus: ``clip_cXX_sY/{hdmap_*.mp4, first_frame_*.png}``."""
+"""Clip files consumed by ``gate_faithful.py`` / ``train_v1.py``."""
 
-CAMERA = "camera_front_wide_120fov"
-"""Single-view camera the chunk2 checkpoint was trained on."""
-
-SCENARIOS = (
-    "clip_c00_s0",
-    "clip_c02_s1",
-    "clip_c04_s2",
-    "clip_c08_s1",
-    "clip_c10_s1",
-    "clip_c13_s1",
-)
-"""Six scenarios spread across the corpus's clip families."""
-
-PROMPT = (
-    "Driving scene from a front-facing car camera. Urban environment with "
-    "roads, vehicles, pedestrians, traffic signs, and buildings. Clear "
-    "visibility, realistic lighting, photorealistic quality. High resolution "
-    "dashcam footage of city driving."
-)
-"""Shipped single-view default prompt (matches the runner literal)."""
+N_CLIPS = int(os.environ.get("N_CLIPS", "6"))
+"""Sample clips to roll out (first ``N_CLIPS`` of the dataset, sorted)."""
 
 LAP_CHUNKS = 5
-"""AR chunks per lap (40 decoded frames = 1.33 s; the 48-frame source
-clips leave 43 frames after chunk 0's 5, so 5 chunks is the max)."""
+"""AR chunks per lap (40 decoded frames = 1.33 s; kept identical to pairs
+v1 so gate numbers compare across régimes)."""
 
 LAPS = 16
 """Laps per rollout: 81 chunks = 645 frames = 21.5 s at 30 fps."""
@@ -98,6 +82,36 @@ NUM_CHUNK = 1 + LAP_CHUNKS * LAPS
 
 NOISE_SEED = 5042
 """Diffusion RNG seed per rollout (offset by clip index)."""
+
+
+def _list_sample_uuids(n: int) -> list[str]:
+    """Return the first ``n`` single-view sample UUIDs, alphabetically."""
+    from huggingface_hub import HfApi
+    from huggingface_hub.hf_api import RepoFolder
+
+    entries = HfApi().list_repo_tree(
+        repo_id="nvidia/omni-dreams-samples",
+        repo_type="dataset",
+        path_in_repo="data/single_view",
+        recursive=False,
+    )
+    uuids = sorted(
+        e.path.rsplit("/", 1)[-1] for e in entries if isinstance(e, RepoFolder)
+    )
+    assert len(uuids) >= n, f"dataset lists only {len(uuids)} single-view clips"
+    return uuids[:n]
+
+
+def _clip_prompt(uuid: str) -> str:
+    """Fetch the clip's own prompt from the dataset."""
+    from huggingface_hub import hf_hub_download
+
+    path = hf_hub_download(
+        repo_id="nvidia/omni-dreams-samples",
+        repo_type="dataset",
+        filename=f"data/single_view/{uuid}/prompt.txt",
+    )
+    return Path(path).read_text().strip()
 
 
 def tile_hdmap(hdmap: torch.Tensor) -> torch.Tensor:
@@ -120,14 +134,15 @@ def main() -> None:
     pipe = build_pipeline(with_oneshot_encoders=True)
     device, dtype = pipe.device, torch.bfloat16
 
-    for c, scenario in enumerate(SCENARIOS):
+    for c, uuid in enumerate(_list_sample_uuids(N_CLIPS)):
         out = OUT_DIR / f"clip_{c:02d}.pt"
         if out.exists():
-            print(f"SKIP clip {c} ({scenario}): {out} exists", flush=True)
+            print(f"SKIP clip {c} ({uuid}): {out} exists", flush=True)
             continue
-        sdir = SCENARIO_DIR / scenario
+        (hdmap_path,), (frame_path,) = _ensure_hf_single_view_example_data_synced(uuid)
+        prompt = _clip_prompt(uuid)
         hdmap = _load_video(
-            sdir / f"hdmap_{CAMERA}.mp4",
+            hdmap_path,
             pixel_height=DEFAULT_VIDEO_HEIGHT,
             pixel_width=DEFAULT_VIDEO_WIDTH,
             device=device,
@@ -135,14 +150,14 @@ def main() -> None:
         )
         hdmap = tile_hdmap(hdmap)[None, None]  # [1, 1, T, C, H, W]
         first = _load_first_frame(
-            sdir / f"first_frame_{CAMERA}.png",
+            frame_path,
             pixel_height=DEFAULT_VIDEO_HEIGHT,
             pixel_width=DEFAULT_VIDEO_WIDTH,
             device=device,
             dtype=dtype,
         )[None, :, None]  # [1, V=1, 1, C, H, W]
 
-        embeddings = pipe.precompute_embeddings(text=[[PROMPT]], image=first)
+        embeddings = pipe.precompute_embeddings(text=[[prompt]], image=first)
         cache = pipe.initialize_cache_from_embeddings(
             text_embeddings=embeddings["text_embeddings"],
             image_embeddings=embeddings["image_embeddings"],
@@ -159,8 +174,8 @@ def main() -> None:
             snaps=snaps,
             embeddings=embeddings,
             meta={
-                "scenario": scenario,
-                "prompt": PROMPT,
+                "uuid": uuid,
+                "prompt": prompt,
                 "num_chunk": NUM_CHUNK,
                 "lap_chunks": LAP_CHUNKS,
                 "laps": LAPS,
@@ -169,7 +184,7 @@ def main() -> None:
         )
         mp4 = OUT_DIR / f"clip_{c:02d}_loop.mp4"
         _write_video(video[0, 0].permute(0, 2, 3, 1), mp4, fps=30)
-        print(f"clip {c} ({scenario}): saved {out} + {mp4}", flush=True)
+        print(f"clip {c} ({uuid}): saved {out} + {mp4}", flush=True)
 
     print("PAIRS-DONE", flush=True)
 
