@@ -26,7 +26,8 @@ The drift-gap denominator is required (raw MSE diverges; reference
 finding); ``R^2 = 1 - L``. Both passes share the exact ``z_t`` re-noised
 from the rollout's own x0 (native anchoring). Timesteps are sampled from
 the 2 distillation steps with probability proportional to the measured
-``alpha*(t)`` (0.97 @ t=1000, 0.75 @ t=803).
+``alpha*(t)`` (pairs-v2 gate: 0.96 @ t=1000, 0.667 @ t=803); fully-collapsed
+cells (``rel_v > 0.8``) are excluded at draw time per the owner rider.
 
 Host adaptations vs the HY reference (``hy_worldplay`` ``train_v1.py``):
 velocity-space targets; history rebuilt per sample by a truncated
@@ -93,9 +94,16 @@ replay diverges from the rollout state (rel 0.034 measured). The error
 decays with warmup depth and hits the bf16 floor at 9 chunks (rel ~0.005,
 1-2% of the drift-gap signal); measured on this host 2026-07-22."""
 
-ALPHA_STAR = (0.97, 0.75)
-"""Measured unbiased alpha* per solver timestep (t=1000, t=803); used as
-the timestep sampling weights."""
+ALPHA_STAR = (0.96, 0.667)
+"""Measured unbiased alpha* per solver timestep (t=1000, t=803) from the
+pairs-v2 (photoreal) gate; used as the timestep sampling weights."""
+
+REL_V_EXCLUDE = 0.8
+"""Owner rider 2026-07-22: drop fully-collapsed cells. A sample whose
+velocity-space drift gap ``||v_clean - v_base|| / ||v_base||`` exceeds this
+is a degenerate state (e.g. the clip-0 late-horizon collapse) and is
+rejected at draw time (the probes needed for the check are computed anyway;
+exclusions are logged per clip)."""
 
 N_VAL_CLIPS = 1
 SEED = int(os.environ.get("SEED", "0"))
@@ -243,10 +251,16 @@ def main() -> None:
             )
         return flow.float()
 
+    excl = {c: {"tested": 0, "excluded": 0} for c in range(len(datas))}
+
     def sample_losses(
         c: int, grad: bool, rng_: np.random.Generator
-    ) -> tuple[Tensor, Tensor]:
-        """One drift-pair sample -> (normalized v-space loss, r_target sq-norm)."""
+    ) -> tuple[Tensor, Tensor] | None:
+        """One drift-pair sample -> (normalized v-space loss, r_target sq-norm).
+
+        Returns ``None`` when the cell is degenerate (fully-collapsed state,
+        ``rel_v > REL_V_EXCLUDE``); callers redraw.
+        """
         use_clip_text(c)
         d = to_device(c)
         k = int(rng_.choice(ks))
@@ -274,6 +288,12 @@ def main() -> None:
             tc.finalize(k)
         r_target_sq = (v_clean - v_base).square().sum()
 
+        excl[c]["tested"] += 1
+        rel_v = (r_target_sq.sqrt() / (v_base.norm() + 1e-9)).item()
+        if rel_v > REL_V_EXCLUDE:
+            excl[c]["excluded"] += 1
+            return None
+
         set_lora_scale(network, 1.0)
         with torch.no_grad():
             replay_window(gen, d["hdmaps"], k)  # LoRA-scaled replay, no grad
@@ -284,12 +304,21 @@ def main() -> None:
         tc.finalize(k)
         return loss, r_target_sq
 
+    def draw_losses(
+        ids: list[int], grad: bool, rng_: np.random.Generator
+    ) -> tuple[Tensor, Tensor]:
+        """Redraw until a non-degenerate cell is sampled."""
+        while True:
+            out = sample_losses(int(rng_.choice(ids)), grad, rng_)
+            if out is not None:
+                return out
+
     @torch.no_grad()
     def val_r2(n: int = 12) -> float:
         vrng = np.random.default_rng(1234)  # fixed cells/noise across evals
         s = 0.0
         for _ in range(n):
-            loss, _ = sample_losses(int(vrng.choice(val_ids)), False, vrng)
+            loss, _ = draw_losses(val_ids, False, vrng)
             s += loss.item()
         return 1 - s / n
 
@@ -330,15 +359,19 @@ def main() -> None:
         for pg in opt.param_groups:
             pg["lr"] = LR * min(1.0, step / WARMUP)
         opt.zero_grad()
-        loss, rt_sq = sample_losses(int(rng.choice(train_ids)), True, rng)
+        loss, rt_sq = draw_losses(train_ids, True, rng)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(params, GRAD_CLIP)
         opt.step()
         if step % EVAL_EVERY == 0 or step == 1:
+            excl_str = " ".join(
+                f"c{c}:{v['excluded']}/{v['tested']}" for c, v in excl.items()
+            )
             print(
                 f"step {step:5d} | loss {loss.item():.4f}"
                 f" (train R^2 {1 - loss.item():+.3f})"
-                f" | val R^2 {val_r2():+.3f} | |r_t|^2 {rt_sq.item():.1f}",
+                f" | val R^2 {val_r2():+.3f} | |r_t|^2 {rt_sq.item():.1f}"
+                f" | excluded {excl_str}",
                 flush=True,
             )
         if step % SAVE_EVERY == 0 or step == STEPS:
