@@ -131,21 +131,23 @@ def tile_hdmap(hdmap: torch.Tensor) -> torch.Tensor:
 
 def main() -> None:
     torch.set_grad_enabled(False)
-    pipe = build_pipeline(with_oneshot_encoders=True)
-    device, dtype = pipe.device, torch.bfloat16
+    dtype = torch.bfloat16
 
+    # Load every clip's inputs BEFORE any model/rollout work: video decode
+    # forks ffmpeg, which fails silently (empty read) once this process has
+    # grown to rollout size -- observed 3x on this box, always on the
+    # second decode of a job.
+    inputs: list[tuple[str, str, torch.Tensor, torch.Tensor] | None] = []
     for c, uuid in enumerate(_list_sample_uuids(N_CLIPS)):
-        out = OUT_DIR / f"clip_{c:02d}.pt"
-        if out.exists():
-            print(f"SKIP clip {c} ({uuid}): {out} exists", flush=True)
+        if (OUT_DIR / f"clip_{c:02d}.pt").exists():
+            inputs.append(None)
             continue
         (hdmap_path,), (frame_path,) = _ensure_hf_single_view_example_data_synced(uuid)
-        prompt = _clip_prompt(uuid)
         hdmap = _load_video(
             hdmap_path,
             pixel_height=DEFAULT_VIDEO_HEIGHT,
             pixel_width=DEFAULT_VIDEO_WIDTH,
-            device=device,
+            device="cpu",
             dtype=dtype,
         )
         hdmap = tile_hdmap(hdmap)[None, None]  # [1, 1, T, C, H, W]
@@ -153,9 +155,23 @@ def main() -> None:
             frame_path,
             pixel_height=DEFAULT_VIDEO_HEIGHT,
             pixel_width=DEFAULT_VIDEO_WIDTH,
-            device=device,
+            device="cpu",
             dtype=dtype,
         )[None, :, None]  # [1, V=1, 1, C, H, W]
+        inputs.append((uuid, _clip_prompt(uuid), hdmap, first))
+        print(f"loaded inputs for clip {c} ({uuid})", flush=True)
+
+    pipe = build_pipeline(with_oneshot_encoders=True)
+    device = pipe.device
+
+    for c, item in enumerate(inputs):
+        out = OUT_DIR / f"clip_{c:02d}.pt"
+        if item is None:
+            print(f"SKIP clip {c}: {out} exists", flush=True)
+            continue
+        uuid, prompt, hdmap, first = item
+        hdmap = hdmap.to(device)
+        first = first.to(device)
 
         embeddings = pipe.precompute_embeddings(text=[[prompt]], image=first)
         cache = pipe.initialize_cache_from_embeddings(
