@@ -5,6 +5,20 @@ SPDX-License-Identifier: Apache-2.0
 
 # Drift correction on FlashDreams HY-WorldPlay — results report (2026-07-16)
 
+## 2026-07-22 OOD generalization (model-card scenes) + owner verdict
+
+Four commanded-motion cells on official HY card images (yaw-turn/Zelda,
+strafe/GTA-street, forward/snowy-cabin, mixed/castle; matched prompts, seed
+5042, 24 chunks; `outputs/eval_ood_*/`). Owner verdict: **corrgate050 best
+overall on the new dynamic scenes** — textbook bridge profile on strafe
+(Δ −97%, dyn ≈ base, seams ≈ base, +4.6 MUSIQ) and no yaw anchoring — BUT
+**people blur/morph vs base in person-walking content** (no pulse), and the
+two stylized scenes regress on Δ/MUSIQ while the trained axes improve
+(snow: sat 0.055 vs 0.153, sharpness-ratio 0.61 vs 0.37). Object-level
+content-proximity effect: the strafe-loop training pairs (test.png seeds)
+contain no humans. Fix in flight: content-diversification DAgger round
+(issues.md row 5).
+
 ## 2026-07-22 official VBench 6-dim table (paper harness, calibrated scale)
 
 Scored on the EXISTING shipped-decision videos (no new generation): bridge
