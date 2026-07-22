@@ -32,7 +32,6 @@ import os
 from pathlib import Path
 
 import torch
-
 from _rollout import build_runner, capture_rollout, install_alpha_gate
 
 ## Eval configuration
@@ -56,9 +55,7 @@ distinct from the training strafe loops."""
 IMAGES_DIR = os.environ.get("IMAGES_DIR", "")
 """Held-out first frames; empty -> the upstream sample image."""
 
-SEEDS = tuple(
-    int(s) for s in os.environ.get("SEEDS", "5042,5043").split(",")
-)
+SEEDS = tuple(int(s) for s in os.environ.get("SEEDS", "5042,5043").split(","))
 """Diffusion seeds; every (pose, image, seed) cell runs in every config."""
 
 N_IMAGES = int(os.environ.get("N_IMAGES", "0"))
@@ -94,9 +91,7 @@ def main() -> None:
         if s.strip():
             scale = float(s)
             name = (
-                "corrgate"
-                if scale == 1.0
-                else f"corrgate{scale:.2f}".replace(".", "")
+                "corrgate" if scale == 1.0 else f"corrgate{scale:.2f}".replace(".", "")
             )
             configs[name] = ("gate", scale)
 
@@ -119,11 +114,16 @@ def main() -> None:
                             output_dir=OUT_DIR,
                             image_path=image_path,
                         )
-                        from _lora import apply_lora, load_lora, set_lora_scale
+                        from _lora import (
+                            apply_lora,
+                            load_lora,
+                            set_lora_scale,
+                            unwrap_compiled,
+                        )
 
-                        network = runner.pipeline.diffusion_model.transformer.network
-                        if hasattr(network, "_orig_mod"):
-                            network = network._orig_mod
+                        network = unwrap_compiled(
+                            runner.pipeline.diffusion_model.transformer.network
+                        )
                         apply_lora(network)
                         load_lora(network, LORA)
                         if PROMPT:
@@ -137,8 +137,13 @@ def main() -> None:
 
                     mode["gain"] = gain
                     if not isinstance(gain, tuple):
+                        assert (
+                            network is not None
+                        )  # bound with the runner on first build
                         set_lora_scale(network, gain)
-                    print(f"{config}/{name}: rolling {NUM_CHUNK} chunks ...", flush=True)
+                    print(
+                        f"{config}/{name}: rolling {NUM_CHUNK} chunks ...", flush=True
+                    )
                     capture_rollout(runner, noise_seed=seed, mp4_path=mp4)
     print(f"done -> {OUT_DIR}", flush=True)
 

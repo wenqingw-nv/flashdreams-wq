@@ -39,7 +39,6 @@ from pathlib import Path
 
 import numpy as np
 import torch
-
 from _rollout import (
     build_runner,
     capture_rollout,
@@ -141,11 +140,11 @@ def main() -> None:
                     output_dir=OUT_DIR,
                     image_path=image_path,
                 )
-                from _lora import apply_lora, load_lora
+                from _lora import apply_lora, load_lora, unwrap_compiled
 
-                network = runner.pipeline.diffusion_model.transformer.network
-                if hasattr(network, "_orig_mod"):
-                    network = network._orig_mod
+                network = unwrap_compiled(
+                    runner.pipeline.diffusion_model.transformer.network
+                )
                 apply_lora(network)
                 load_lora(network, LORA)
                 install_alpha_gate(runner, network, mode)
@@ -155,6 +154,7 @@ def main() -> None:
 
             mode["gain"] = gain
             if not isinstance(gain, tuple):
+                assert network is not None  # bound with the runner on first build
                 set_lora_scale(network, gain)
             runner.config.prompt = prompt
             print(f"{config}/{mp4.stem}: rolling {NUM_CHUNK} chunks ...", flush=True)

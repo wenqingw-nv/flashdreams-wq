@@ -37,13 +37,12 @@ from __future__ import annotations
 import math
 
 import torch
-from torch import Tensor
-
 from hy_worldplay._camera import (
     HyWorldPlayMemoryKVCache,
     HyWorldPlayPRoPESelfAttention,
 )
 from hy_worldplay._prope import prope_qkv
+from torch import Tensor
 
 
 def _rope_interleaved(x: Tensor, freqs: Tensor) -> Tensor:
@@ -155,4 +154,4 @@ def _functional_dual_branch(
 
 def patch_functional_attention() -> None:
     """Swap ``forward_dual_branch`` for the functional variant, process-wide."""
-    HyWorldPlayPRoPESelfAttention.forward_dual_branch = _functional_dual_branch
+    HyWorldPlayPRoPESelfAttention.forward_dual_branch = _functional_dual_branch  # type: ignore[assignment]  # ty: ignore[invalid-assignment]

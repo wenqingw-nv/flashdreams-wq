@@ -38,12 +38,18 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import torch
-from torch import Tensor
-
-from _lora import apply_lora, load_lora, lora_parameters, save_lora, set_lora_scale
+from _lora import (
+    apply_lora,
+    load_lora,
+    lora_parameters,
+    save_lora,
+    set_lora_scale,
+    unwrap_compiled,
+)
 from _pairs import (
     TOKENS_PER_FRAME,
     chunk_x0,
@@ -54,8 +60,12 @@ from _pairs import (
 )
 from _rollout import build_runner, finish_probe_chunk, start_probe_chunk
 from _train_attn import patch_functional_attention
-from hy_worldplay._action import HyWorldPlayWan21TransformerCache
+from hy_worldplay._action import (
+    HyWorldPlayWan21Transformer,
+    HyWorldPlayWan21TransformerCache,
+)
 from hy_worldplay.runner import _resolve_prompt, preprocess_first_frame
+from torch import Tensor
 from train_v1 import checkpoint_blocks
 
 ## Training configuration
@@ -97,7 +107,8 @@ anti-repeat / anti-hallucination seatbelt. Ramped linearly over
 FID_WARMUP = 100
 
 TARGETS = tuple(
-    t.strip() for t in os.environ.get(
+    t.strip()
+    for t in os.environ.get(
         "TARGETS", "self_attn.q,self_attn.k,self_attn.v,self_attn.o"
     ).split(",")
 )
@@ -132,12 +143,14 @@ def main() -> None:
     pipe = runner.pipeline
     device = next(pipe.parameters()).device
     dtype = next(pipe.parameters()).dtype
-    transformer = pipe.diffusion_model.transformer
+    transformer = cast(HyWorldPlayWan21Transformer, pipe.diffusion_model.transformer)
     scheduler = pipe.diffusion_model.scheduler
-    timesteps, sigmas = scheduler.timesteps, scheduler.sigmas
+    timesteps = cast(Tensor, scheduler.timesteps)
+    sigmas = cast(Tensor, scheduler.sigmas)
     n_steps = len(timesteps) - 1
 
     cfg = runner.config
+    assert cfg.image_path is not None  # build_runner resolves the sample image
     image = preprocess_first_frame(
         cfg.image_path, cfg.pixel_height, cfg.pixel_width
     ).to(device=device, dtype=dtype)
@@ -145,9 +158,7 @@ def main() -> None:
     tc = cache.transformer_cache
     assert isinstance(tc, HyWorldPlayWan21TransformerCache)
 
-    network = transformer.network
-    if hasattr(network, "_orig_mod"):
-        network = network._orig_mod
+    network = unwrap_compiled(transformer.network)
     apply_lora(network, rank=RANK, targets=TARGETS)
     if INIT and INIT != "scratch":
         load_lora(network, INIT)
@@ -349,7 +360,10 @@ def main() -> None:
             save_lora(network, CKPT)
 
     vl = val_loss(16)
-    print(f"v2 done | final val dag-loss {vl:.4f} (R^2 {1 - vl:+.3f}) | saved {CKPT}", flush=True)
+    print(
+        f"v2 done | final val dag-loss {vl:.4f} (R^2 {1 - vl:+.3f}) | saved {CKPT}",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

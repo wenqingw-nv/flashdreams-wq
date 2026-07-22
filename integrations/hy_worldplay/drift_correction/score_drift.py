@@ -30,12 +30,11 @@ pyiqa / timm are not part of the project deps; run with an ephemeral overlay::
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import numpy as np
 import torch
-
-import os
 
 EVAL_DIR = Path(
     os.environ.get(
@@ -239,8 +238,8 @@ def contact_strip(frames: np.ndarray, out_path: Path, n: int = 10) -> None:
 
 def main() -> None:
     import imageio.v3 as iio
-    import pyiqa
-    import timm
+    import pyiqa  # ty: ignore[unresolved-import]
+    import timm  # ty: ignore[unresolved-import]
     from torchvision.models.optical_flow import Raft_Large_Weights, raft_large
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -347,7 +346,11 @@ def main() -> None:
     for name in configs:
         if name == "base" or b is None or b["delta_drift"] <= 0:
             continue
-        red = 100 * (b["delta_drift"] - results[name]["aggregate"]["delta_drift"]) / b["delta_drift"]
+        red = (
+            100
+            * (b["delta_drift"] - results[name]["aggregate"]["delta_drift"])
+            / b["delta_drift"]
+        )
         print(f"{name}: Delta-drift reduction vs base: {red:.0f}% (target >= 30%)")
     print(
         "guards: dynamic degree within ~20% of base (motion freeze) and "

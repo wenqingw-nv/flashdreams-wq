@@ -44,24 +44,42 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import torch
-from torch import Tensor
-
-from _lora import apply_lora, load_lora, lora_parameters, save_lora, set_lora_scale
+from _lora import (
+    apply_lora,
+    load_lora,
+    lora_parameters,
+    save_lora,
+    set_lora_scale,
+    unwrap_compiled,
+)
 from _pairs import chunk_x0, clean_counterfactual, history_of, load_clip, make_ctrl
 from _rollout import build_runner, finish_probe_chunk, start_probe_chunk
 from _train_attn import patch_functional_attention
-from hy_worldplay._action import HyWorldPlayWan21TransformerCache
+from hy_worldplay._action import (
+    HyWorldPlayWan21Transformer,
+    HyWorldPlayWan21TransformerCache,
+)
 from hy_worldplay.runner import _resolve_prompt, preprocess_first_frame
+from torch import Tensor
 
 ## Training configuration
 
-PAIRS_DIR = Path(os.environ.get("PAIRS_DIR", "integrations/hy_worldplay/drift_correction/outputs/pairs"))
+PAIRS_DIR = Path(
+    os.environ.get(
+        "PAIRS_DIR", "integrations/hy_worldplay/drift_correction/outputs/pairs"
+    )
+)
 """Clip files from ``build_pairs.py``."""
 
-CKPT = Path(os.environ.get("CKPT", "integrations/hy_worldplay/drift_correction/outputs/lora_v1.pt"))
+CKPT = Path(
+    os.environ.get(
+        "CKPT", "integrations/hy_worldplay/drift_correction/outputs/lora_v1.pt"
+    )
+)
 """Output LoRA checkpoint; saved every ``SAVE_EVERY`` steps."""
 
 INIT = os.environ.get("INIT", "")
@@ -120,12 +138,14 @@ def main() -> None:
     pipe = runner.pipeline
     device = next(pipe.parameters()).device
     dtype = next(pipe.parameters()).dtype
-    transformer = pipe.diffusion_model.transformer
+    transformer = cast(HyWorldPlayWan21Transformer, pipe.diffusion_model.transformer)
     scheduler = pipe.diffusion_model.scheduler
-    timesteps, sigmas = scheduler.timesteps, scheduler.sigmas
+    timesteps = cast(Tensor, scheduler.timesteps)
+    sigmas = cast(Tensor, scheduler.sigmas)
     n_steps = len(timesteps) - 1
 
     cfg = runner.config
+    assert cfg.image_path is not None  # build_runner resolves the sample image
     image = preprocess_first_frame(
         cfg.image_path, cfg.pixel_height, cfg.pixel_width
     ).to(device=device, dtype=dtype)
@@ -133,9 +153,7 @@ def main() -> None:
     tc = cache.transformer_cache
     assert isinstance(tc, HyWorldPlayWan21TransformerCache)
 
-    network = transformer.network
-    if hasattr(network, "_orig_mod"):
-        network = network._orig_mod
+    network = unwrap_compiled(transformer.network)
     wrapped = apply_lora(network, rank=RANK)
     if INIT:
         load_lora(network, INIT)
@@ -148,7 +166,9 @@ def main() -> None:
     checkpoint_blocks(network)
     params = lora_parameters(network)
     n_params = sum(p.numel() for p in params)
-    print(f"LoRA on {len(wrapped)} projections | {n_params / 1e6:.2f}M params", flush=True)
+    print(
+        f"LoRA on {len(wrapped)} projections | {n_params / 1e6:.2f}M params", flush=True
+    )
     opt = torch.optim.AdamW(params, lr=LR)
 
     # Clip latents stay on CPU; a draw moves one clip's tensors to device.
@@ -160,7 +180,9 @@ def main() -> None:
     num_chunk = datas[0]["num_chunk"]
     # Windows fully past the clean lap: selected recent-16 frames all drifted.
     ks = list(range((CLEAN_LAP + 2) * lap_chunks, num_chunk))
-    print(f"{len(datas)} clips ({len(val_ids)} val) | k in {ks[0]}..{ks[-1]}", flush=True)
+    print(
+        f"{len(datas)} clips ({len(val_ids)} val) | k in {ks[0]}..{ks[-1]}", flush=True
+    )
 
     def predict(ctrl, z_t: Tensor, t_idx: int) -> Tensor:
         t = timesteps[t_idx].to(dtype)
@@ -195,9 +217,7 @@ def main() -> None:
         )
         x0 = chunk_x0(d, k)
         sig = sigmas[t_idx].to(dtype)
-        z_t = (1 - sig) * x0 + sig * torch.randn(
-            x0.shape, device=device, dtype=dtype
-        )
+        z_t = (1 - sig) * x0 + sig * torch.randn(x0.shape, device=device, dtype=dtype)
 
         with torch.no_grad():
             set_lora_scale(network, 0.0)

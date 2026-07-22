@@ -41,10 +41,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 import torch
-from torch import Tensor
-
 from _rollout import (
     ChunkSnapshot,
     build_runner,
@@ -56,6 +55,7 @@ from _rollout import (
 )
 from hy_worldplay._action import HyWorldPlayWan21TransformerCache
 from hy_worldplay.runner import _resolve_prompt, preprocess_first_frame
+from torch import Tensor
 
 ## Gate configuration
 
@@ -200,7 +200,8 @@ def main() -> None:
     assert isinstance(tc, HyWorldPlayWan21TransformerCache)
     transformer = pipe.diffusion_model.transformer
     scheduler = pipe.diffusion_model.scheduler
-    timesteps, sigmas = scheduler.timesteps, scheduler.sigmas
+    timesteps = cast(Tensor, scheduler.timesteps)
+    sigmas = cast(Tensor, scheduler.sigmas)
     n_steps = len(timesteps) - 1  # trailing entry is the terminal t=0
 
     results: dict[str, dict] = {}
@@ -226,19 +227,34 @@ def main() -> None:
                 g = torch.Generator(device=device).manual_seed(
                     10_000 * k + 100 * t_idx + m
                 )
-                eps = torch.randn(
-                    x0.shape, device=device, dtype=dtype, generator=g
-                )
+                eps = torch.randn(x0.shape, device=device, dtype=dtype, generator=g)
                 z_ts[t_idx].append((1 - sig) * x0 + sig * eps)
 
-        common = dict(
-            ar_idx=k, z_ts=z_ts, timesteps=timesteps, sigmas=sigmas, dtype=dtype
+        x0_gen = probe_cell(
+            transformer,
+            tc,
+            snaps_a[k],
+            history=h_gen,
+            ar_idx=k,
+            z_ts=z_ts,
+            timesteps=timesteps,
+            sigmas=sigmas,
+            dtype=dtype,
         )
-        x0_gen = probe_cell(transformer, tc, snaps_a[k], history=h_gen, **common)
         results[str(k)] = {}
         for name, h_alt in variants.items():
             assert h_alt is not None
-            x0_alt = probe_cell(transformer, tc, snaps_a[k], history=h_alt, **common)
+            x0_alt = probe_cell(
+                transformer,
+                tc,
+                snaps_a[k],
+                history=h_alt,
+                ar_idx=k,
+                z_ts=z_ts,
+                timesteps=timesteps,
+                sigmas=sigmas,
+                dtype=dtype,
+            )
             alphas, alphas_ub, rels = [], [], []
             for t_idx in range(n_steps):
                 deltas = torch.stack(
@@ -297,7 +313,9 @@ def main() -> None:
     elif frac_go >= 0.7:
         print("RESULT: history-induced gap is systematic at most steps. GO.")
     else:
-        print("RESULT: gap is noise-dominated at many steps. Investigate before training.")
+        print(
+            "RESULT: gap is noise-dominated at many steps. Investigate before training."
+        )
     print(f"saved {OUT_DIR / 'gate_results.json'}")
 
 

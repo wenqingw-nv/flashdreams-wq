@@ -20,9 +20,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import torch
-from torch import Tensor
-
 from hy_worldplay._action import HyWorldPlayCtrl
+from torch import Tensor
 
 TOKENS_PER_FRAME = 880
 """Post-patchify tokens per latent frame at 704x1280 (44/2 * 80/2)."""

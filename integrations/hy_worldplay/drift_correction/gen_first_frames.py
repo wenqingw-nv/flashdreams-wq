@@ -48,7 +48,8 @@ PROMPTS_FILE = Path(
         "/localhome/local-wenqingw/projs/Self-Forcing/prompts/MovieGenVideoBench_extended.txt",
     )
 )
-"""One prompt per line."""
+"""One prompt per line (e.g. Self-Forcing's
+``MovieGenVideoBench_extended.txt``); set via the ``PROMPTS_FILE`` env var."""
 
 N_FRAMES = int(os.environ.get("N_FRAMES", "40"))
 SPLIT = os.environ.get("SPLIT", "train")
@@ -77,9 +78,7 @@ def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     prompts = [
-        line.strip()
-        for line in PROMPTS_FILE.read_text().splitlines()
-        if line.strip()
+        line.strip() for line in PROMPTS_FILE.read_text().splitlines() if line.strip()
     ]
     start = 0 if SPLIT == "train" else _EVAL_PROMPT_OFFSET
     picked = prompts[start : start + N_FRAMES]
@@ -88,8 +87,9 @@ def main() -> None:
         f"from offset {start}."
     )
 
+    from wan22.config import PIPELINE_WAN22_TI2V_5B, WAN22_TI2V_5B_DIT_DIFFUSERS_PATH
+
     from flashdreams.infra.config import derive_config
-    from wan22.config import WAN22_TI2V_5B_DIT_DIFFUSERS_PATH, PIPELINE_WAN22_TI2V_5B
 
     # T2V mode: the base pipeline asserts encoder-None when no image is
     # given; VAE graphs off for co-tenant headroom. Upstream sharded the

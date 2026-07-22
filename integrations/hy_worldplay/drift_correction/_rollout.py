@@ -30,8 +30,6 @@ from typing import Any
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 import torch
-from torch import Tensor
-
 from hy_worldplay._action import HyWorldPlayCtrl, HyWorldPlayWan21TransformerCache
 from hy_worldplay.config import RUNNER_HY_WORLDPLAY_WAN_I2V_5B
 from hy_worldplay.runner import (
@@ -40,6 +38,7 @@ from hy_worldplay.runner import (
     _write_mp4,
     preprocess_first_frame,
 )
+from torch import Tensor
 
 ## Runner construction
 
@@ -91,9 +90,7 @@ def build_runner(
         pipeline=dict(
             encoder=dict(encoder=dict(use_cuda_graph=False)),
             decoder=dict(use_cuda_graph=False),
-            diffusion_model=dict(
-                transformer=dict(compile_network=compile_network)
-            ),
+            diffusion_model=dict(transformer=dict(compile_network=compile_network)),
         ),
     )
     runner = cfg.setup()
@@ -289,9 +286,7 @@ def start_probe_chunk(
     tc.start(ar_idx)
 
 
-def finish_probe_chunk(
-    tc: HyWorldPlayWan21TransformerCache, *, ar_idx: int
-) -> None:
+def finish_probe_chunk(tc: HyWorldPlayWan21TransformerCache, *, ar_idx: int) -> None:
     """Close the ``start`` / ``finalize`` bracket after a probe sweep.
 
     ``BlockKVCache`` enforces a strict ``before_update`` / ``after_update``

@@ -39,7 +39,6 @@ import os
 from pathlib import Path
 
 import torch
-
 from _rollout import build_runner, capture_rollout
 
 ## Pair-set configuration
@@ -74,7 +73,8 @@ PROMPTS_FILE = os.environ.get(
     "PROMPTS_FILE",
     "/localhome/local-wenqingw/projs/Self-Forcing/prompts/MovieGenVideoBench_extended.txt",
 )
-"""Prompt source for seed-image-matched text conditioning:
+"""Prompt source (one per line, e.g. Self-Forcing's
+``MovieGenVideoBench_extended.txt``) for seed-image-matched text conditioning:
 ``frame_NNNN.png`` seeds (from ``gen_first_frames.py``) roll with line
 ``NNNN`` of this file instead of the integration's mismatched default
 prompt. Other image names keep the default."""
@@ -131,9 +131,10 @@ def main() -> None:
 
     if IMAGES_DIR:
         images_dir = Path(IMAGES_DIR)
-        images: list[Path | None] = sorted(images_dir.glob("*.png")) + sorted(
-            images_dir.glob("*.jpg")
-        )
+        images: list[Path | None] = [
+            *sorted(images_dir.glob("*.png")),
+            *sorted(images_dir.glob("*.jpg")),
+        ]
         assert images, f"IMAGES_DIR {images_dir} contains no .png/.jpg files"
     else:
         images = [None]
@@ -157,14 +158,22 @@ def main() -> None:
         image_path = images[i % len(images)]
         if runner is None:
             runner = build_runner(
-                num_chunk=num_chunk, pose=pose, output_dir=OUT_DIR, image_path=image_path
+                num_chunk=num_chunk,
+                pose=pose,
+                output_dir=OUT_DIR,
+                image_path=image_path,
             )
             if CORRECTOR_LORA:
-                from _lora import apply_lora, load_lora, set_lora_scale
+                from _lora import (
+                    apply_lora,
+                    load_lora,
+                    set_lora_scale,
+                    unwrap_compiled,
+                )
 
-                network = runner.pipeline.diffusion_model.transformer.network
-                if hasattr(network, "_orig_mod"):
-                    network = network._orig_mod
+                network = unwrap_compiled(
+                    runner.pipeline.diffusion_model.transformer.network
+                )
                 apply_lora(network)
                 load_lora(network, CORRECTOR_LORA)
                 set_lora_scale(network, 1.0)
@@ -182,6 +191,11 @@ def main() -> None:
         snaps = capture_rollout(runner, noise_seed=seed)
 
         ctrl0 = snaps[1].ctrl  # chunk >= 1 carries the rollout-scoped buffers
+        assert (
+            ctrl0.rollout_action is not None
+            and ctrl0.rollout_viewmats is not None
+            and ctrl0.rollout_Ks is not None
+        ), "chunk >= 1 ctrl must carry the rollout-scoped buffers"
         torch.save(
             {
                 "latents": torch.cat(

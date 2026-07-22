@@ -44,10 +44,21 @@ def hstack(left: Path, right: Path, out: Path) -> None:
     """Write a horizontal side-by-side of two same-size videos."""
     subprocess.run(
         [
-            "ffmpeg", "-y", "-loglevel", "error",
-            "-i", str(left), "-i", str(right),
-            "-filter_complex", "[0:v][1:v]hstack",
-            "-c:v", "libx264", "-crf", "18", str(out),
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            str(left),
+            "-i",
+            str(right),
+            "-filter_complex",
+            "[0:v][1:v]hstack",
+            "-c:v",
+            "libx264",
+            "-crf",
+            "18",
+            str(out),
         ],
         check=True,
     )

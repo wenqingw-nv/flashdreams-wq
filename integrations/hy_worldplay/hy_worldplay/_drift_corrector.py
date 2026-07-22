@@ -112,9 +112,7 @@ def is_static_trajectory(pose: str | Path, n_latents: int) -> bool:
     return bool((labels == STATIC_ACTION_CLASS).all())
 
 
-def maybe_apply_drift_corrector(
-    runner: Any, checkpoint: Path, gain: float
-) -> str:
+def maybe_apply_drift_corrector(runner: Any, checkpoint: Path, gain: float) -> str:
     """Deploy the corrector on ``runner`` keyed on the job's trajectory content.
 
     Ship rule (owner decision 2026-07-21): static scenes measure negative

@@ -33,12 +33,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 import torch
-from torch import Tensor
-
 from _pairs import (
-    TOKENS_PER_FRAME,
     chunk_x0,
     clean_counterfactual,
     history_of,
@@ -48,6 +46,7 @@ from _pairs import (
 from _rollout import build_runner, finish_probe_chunk, predict_x0, start_probe_chunk
 from hy_worldplay._action import HyWorldPlayWan21TransformerCache
 from hy_worldplay.runner import _resolve_prompt, preprocess_first_frame
+from torch import Tensor
 
 ## Gate configuration
 
@@ -83,6 +82,7 @@ def main() -> None:
     device = next(pipe.parameters()).device
     dtype = next(pipe.parameters()).dtype
     cfg = runner.config
+    assert cfg.image_path is not None  # build_runner resolves the sample image
     image = preprocess_first_frame(
         cfg.image_path, cfg.pixel_height, cfg.pixel_width
     ).to(device=device, dtype=dtype)
@@ -91,7 +91,8 @@ def main() -> None:
     assert isinstance(tc, HyWorldPlayWan21TransformerCache)
     transformer = pipe.diffusion_model.transformer
     scheduler = pipe.diffusion_model.scheduler
-    timesteps, sigmas = scheduler.timesteps, scheduler.sigmas
+    timesteps = cast(Tensor, scheduler.timesteps)
+    sigmas = cast(Tensor, scheduler.sigmas)
     n_steps = len(timesteps) - 1
 
     # Accumulate squared-bias / variance / norms per timestep across all
@@ -164,7 +165,9 @@ def main() -> None:
                 agg[t_idx]["alphas"].append(a)
                 agg[t_idx]["alphas_ub"].append(a_ub)
                 agg[t_idx]["rels"].append(rel)
-                line.append(f"t={int(timesteps[t_idx]):4d} a*={a:.3f}/{a_ub:.3f} rel={rel:.3f}")
+                line.append(
+                    f"t={int(timesteps[t_idx]):4d} a*={a:.3f}/{a_ub:.3f} rel={rel:.3f}"
+                )
             print(" | ".join(line), flush=True)
 
     summary = {
@@ -191,13 +194,17 @@ def main() -> None:
         1, sum(len(v["rels"]) for v in agg.values())
     )
     frac = sum(a >= 0.7 for a in all_ub) / len(all_ub)
-    print(f"cells with unbiased alpha* >= 0.7: {frac:.0%} | mean rel gap {mean_rel:.3f}")
+    print(
+        f"cells with unbiased alpha* >= 0.7: {frac:.0%} | mean rel gap {mean_rel:.3f}"
+    )
     if mean_rel < 0.01:
         print("RESULT: drift gap ~zero -> nothing to correct. STOP.")
     elif frac >= 0.7:
         print("RESULT: real drift gap is systematic. GO for v1 training.")
     else:
-        print("RESULT: below the reference bar -- report before committing to training.")
+        print(
+            "RESULT: below the reference bar -- report before committing to training."
+        )
     print(f"saved {OUT_PATH}")
 
 
