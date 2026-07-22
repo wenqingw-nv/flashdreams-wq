@@ -10,6 +10,13 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Shipped
 
+2026-07-22 update: **motion-job LoRA = `lora_v2c2.pt`** (content-diversification
+round, supersedes v2; owner eyeball PASS on person scenes, bridge Delta -58%
+retained). md5 `1de6023c92b9d3a967d4bfb694eda235`; release tag
+`clean-forcing-hy-v2c2` (old v2 asset kept for reproducibility). Pitfall on
+record: `train_v2` samples uniformly over POOLS — weight small pools
+explicitly via `POOL_WEIGHTS`.
+
 Content-keyed deployment (owner decision 2026-07-21):
 **commanded-motion jobs → corrgate050** (v2 LoRA at per-step α*(t)×0.5) ·
 **static jobs → corrector OFF** (base weights; static scenes measure negative drift — correction

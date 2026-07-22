@@ -20,9 +20,15 @@ diluted the bridge Delta-cut to ~0%; retry fixed both). Checkpoint
 | b_strafe | +2.86 | +1.97 | -31% | +1.4 | ~base |
 | a_turn | -0.95 | -1.56 | further negative | +1.9 | -14% |
 
-Final gate: owner eyeball on the person-scene sbs (blur/morph verdict),
-``outputs/eval_v2c2_e_person/sbs_base_LEFT_vs_corrgate050_RIGHT_*.mp4``.
-If it passes, v2c2 becomes the deployed motion-job LoRA (supersedes v2).
+**SHIPPED (owner eyeball PASS, 2026-07-22)**: the person scene looks
+better to the owner's eye — ``lora_v2c2.pt`` (md5
+``1de6023c92b9d3a967d4bfb694eda235``; weights byte-equal to
+``_step200``) supersedes v2 as the motion-job LoRA. Deploy rule otherwise
+unchanged: corrgate050 dial for commanded motion, corrector OFF for
+static. Runner load path verified identical (300 LoRA tensors, same
+shapes; 6 ci_cpu selection tests pass). Recorded pitfall: ``train_v2``
+samples uniformly over POOLS — a small pool gets 1/n_pools of draws (the
+8-clip pool got 25%, over-rotating the optimum); use ``POOL_WEIGHTS``.
 
 ## 2026-07-22 OOD generalization (model-card scenes) + owner verdict
 
