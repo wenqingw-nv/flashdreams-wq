@@ -24,10 +24,14 @@ a single-scale weight merge cannot express the per-timestep gate; static jobs ha
 
 ## Open (post-ship, low priority)
 
-1. Stop the stale parallel agent session (was launching duplicate jobs; three dups killed).
+1. ~~Stop the stale parallel agent session~~ (done 2026-07-22; PID 634551 killed, see bugs.md).
 2. Ops: add the shell filesystem/clock desync to the existing UVM driver ticket; all published
    numbers were re-verified on real disk after the phantom-view incident (see git log).
-3. Official VBench 6-dim suite via the on-box harness (paper-comparable table) — nice-to-have.
+3. ~~Official VBench 6-dim suite~~ (done 2026-07-22: `score_vbench.py`, tables + reading in
+   `REPORT.md`, raw JSONs in `outputs/vbench/`).
+4. Upstream PR: branch `clean-forcing-hy-worldplay` pushed to fork (single signed-off commit,
+   curated: no internal docs, box paths removed, +ci_cpu tests, ruff-clean). `gh` not installed
+   on this box — owner opens it with the command in `PR_DRAFT.md`.
 
 ## Parked
 

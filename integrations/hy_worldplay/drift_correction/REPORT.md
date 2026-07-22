@@ -5,6 +5,45 @@ SPDX-License-Identifier: Apache-2.0
 
 # Drift correction on FlashDreams HY-WorldPlay — results report (2026-07-16)
 
+## 2026-07-22 official VBench 6-dim table (paper harness, calibrated scale)
+
+Scored on the EXISTING shipped-decision videos (no new generation): bridge
+cells = `outputs/eval_sweep/` (3 held-out commanded-motion trajectories),
+static cells = `outputs/demo_static/` (8 locked-off scenes). Harness = the
+paper setup's custom-input VBench checkout; per-dim raw JSONs + `table.json`
+under `outputs/vbench/` (verified on real disk via fresh foreground probe).
+
+Commanded motion (bridge):
+
+| config | subj cons | bg cons | aesthetic | imaging | motion smooth | dyn degree | mean |
+|---|---|---|---|---|---|---|---|
+| base | 86.4 | 88.6 | 65.3 | 77.6 | 91.4 | 100.0 | 84.9 |
+| corr050 | 92.0 | 92.9 | 67.1 | 77.0 | 91.8 | 100.0 | 86.8 |
+| corrgate | **94.6** | **94.2** | **68.3** | 77.2 | **93.9** | 100.0 | **88.1** |
+| **corrgate050 (shipped)** | 88.7 | 90.2 | 64.5 | 76.5 | 93.0 | 100.0 | 85.5 |
+
+Static suite:
+
+| config | subj cons | bg cons | aesthetic | imaging | motion smooth | dyn degree | mean |
+|---|---|---|---|---|---|---|---|
+| **base (shipped)** | 84.8 | 88.1 | 51.8 | **74.2** | 90.7 | 37.5 | 71.2 |
+| corr050 | 82.8 | 88.9 | 51.7 | 70.7 | 85.0 | 75.0 | 75.7 |
+| corrgate | 88.2 | **91.8** | **53.4** | 71.4 | **91.2** | 37.5 | 72.2 |
+| corrgate050 | **89.3** | 91.5 | 53.3 | 70.6 | 90.0 | 50.0 | 74.1 |
+
+Reading (consistent with the ship decision): on motion content every
+corrector config beats base on consistency/quality dims with dynamic degree
+saturated at 100 for all — corrgate050's smaller VBench margin over base is
+the price of preserving progression (VBench's binary dynamic-degree
+threshold cannot see the anchoring that killed plain corrgate on the owner's
+eyeball; latesim/RAFT in the main table do). On static content the corrector
+rows trade imaging quality (−3.5..−3.6) and motion smoothness for
+consistency, and the static dynamic-degree column is a caveat, not a win:
+locked-off scenes SHOULD be near-static, and corr050's 75.0 reflects its
+erratic-motion artifact. VBench's per-dim means mask the drift axis entirely
+(it has no temporal-degradation dimension), so these tables complement — not
+replace — the Δ-drift/latesim/seam suite.
+
 ## 2026-07-21 deployment pass (Clean Forcing; HANDOFF acceptance criteria)
 
 Gain sweep on 3 held-out trajectories (24 chunks, seed 5042, scene-matched prompt, base re-run
