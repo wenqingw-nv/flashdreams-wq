@@ -96,9 +96,12 @@ higher than on the render-regime pairs (drift couples longer-range), and
 15 chunks reaches rel ~0.009-0.014 = 3-5% of the drift-gap signal
 (measured on this host 2026-07-22)."""
 
-ALPHA_STAR = (0.96, 0.667)
-"""Measured unbiased alpha* per solver timestep (t=1000, t=803) from the
-pairs-v2 (photoreal) gate; used as the timestep sampling weights."""
+ALPHA_STAR = tuple(
+    float(x) for x in os.environ.get("ALPHA_STAR", "0.96,0.667").split(",")
+)
+"""Measured unbiased alpha* per solver timestep (t=1000, t=803); used as
+the timestep sampling weights. Default = the pairs-v2 (photoreal) gate;
+override via env when a pair set gets its own gate run."""
 
 REL_V_EXCLUDE = 0.8
 """Owner rider 2026-07-22: drop fully-collapsed cells. A sample whose
@@ -147,17 +150,19 @@ def main() -> None:
     )
 
     datas = [load_clip(p, "cpu", dtype) for p in clips]
-    lap_chunks, laps, num_chunk = (
-        datas[0]["lap_chunks"],
-        datas[0]["laps"],
-        datas[0]["num_chunk"],
-    )
-    ks = training_ks(num_chunk, lap_chunks, laps)
+    # Per-clip lap geometry: pairs v3 mixes lap lengths across clips (the
+    # repeat-prior fix), so nothing may assume a shared lap_chunks.
+    ks_by_clip = [
+        training_ks(int(d["num_chunk"]), int(d["lap_chunks"]), int(d["laps"]))
+        for d in datas
+    ]
     train_ids = list(range(len(datas) - N_VAL_CLIPS))
     val_ids = list(range(len(datas) - N_VAL_CLIPS, len(datas)))
     print(
-        f"{len(datas)} clips ({len(val_ids)} val) | {len(ks)} cells/clip "
-        f"(k {ks[0]}..{ks[-1]}, laps >= {MIN_LAP}, clean lap {CLEAN_LAP})",
+        f"{len(datas)} clips ({len(val_ids)} val) | lap_chunks "
+        f"{[int(d['lap_chunks']) for d in datas]} | cells/clip "
+        f"{[len(ks) for ks in ks_by_clip]} (laps >= {MIN_LAP}, "
+        f"clean lap {CLEAN_LAP})",
         flush=True,
     )
 
@@ -265,7 +270,8 @@ def main() -> None:
         """
         use_clip_text(c)
         d = to_device(c)
-        k = int(rng_.choice(ks))
+        lap_chunks = int(d["lap_chunks"])
+        k = int(rng_.choice(ks_by_clip[c]))
         t_idx = int(rng_.choice(n_steps, p=t_probs))
         gen = d["latents"]
         clean = list(gen)
@@ -327,7 +333,7 @@ def main() -> None:
     def replay_equivalence_check() -> None:
         """Assert the forged-index window replay matches a full-prefix replay."""
         d = to_device(0)
-        k = ks[0]
+        k = ks_by_clip[0][0]
         g = torch.Generator(device=device).manual_seed(1)
         z_t = (1 - sigmas[0].to(dtype)) * d["latents"][k] + sigmas[0].to(
             dtype

@@ -33,6 +33,11 @@ the gated HF sample set (``nvidia/omni-dreams-samples``): 32 clips with
 REAL dashcam first frames, per-clip prompts, and 80 s authentic HDMaps.
 Requires an authenticated HF token.
 
+v3 (owner retrain call 2026-07-23): run with ``LAP_MIX=4,5,6`` — mixed lap
+lengths rotated per clip break the fixed 40-frame revisit period that let
+the v2-trained corrector learn a repeat prior (``issues.md`` #1). Default
+``LAP_MIX=5`` reproduces the v2 layout exactly.
+
 Run from the flashdreams repo root::
 
     HF_TOKEN=$(cat ~/.cache/huggingface/token) \
@@ -70,15 +75,28 @@ OUT_DIR = Path(
 N_CLIPS = int(os.environ.get("N_CLIPS", "6"))
 """Sample clips to roll out (first ``N_CLIPS`` of the dataset, sorted)."""
 
-LAP_CHUNKS = 5
-"""AR chunks per lap (40 decoded frames = 1.33 s; kept identical to pairs
-v1 so gate numbers compare across régimes)."""
+LAP_MIX = tuple(int(x) for x in os.environ.get("LAP_MIX", "5").split(","))
+"""AR chunks per lap, rotated per clip (clip ``c`` gets
+``LAP_MIX[c % len(LAP_MIX)]``). Pairs v1/v2 used a single ``5`` (40 decoded
+frames = 1.33 s). Pairs v3 uses ``4,5,6`` (32/40/48 frames): a FIXED lap
+period lets the corrector learn "content recurs at lag 40" as a shortcut —
+the HY v2 repeat-prior failure, reproduced here on the scen6 deploy sweep
+(hallucinated repeated trailers + suppressed conditioned crosswalk;
+``issues.md`` #1) — and mixing the lengths breaks the fixed revisit period."""
 
-LAPS = 16
-"""Laps per rollout: 81 chunks = 645 frames = 21.5 s at 30 fps."""
+TARGET_LAP_CHUNKS = 80
+"""Tiled chunks per rollout: laps per clip = ``round(80 / lap_chunks)``,
+so every clip runs ~81 chunks = ~21.5 s regardless of its lap length."""
 
-NUM_CHUNK = 1 + LAP_CHUNKS * LAPS
-"""Chunk 0 (image-anchored, 5 frames) + the tiled laps."""
+
+def clip_layout(c: int) -> tuple[int, int, int]:
+    """Per-clip ``(lap_chunks, laps, num_chunk)`` under the LAP_MIX rotation.
+
+    ``num_chunk`` = chunk 0 (image-anchored, 5 frames) + the tiled laps.
+    """
+    lap_chunks = LAP_MIX[c % len(LAP_MIX)]
+    laps = round(TARGET_LAP_CHUNKS / lap_chunks)
+    return lap_chunks, laps, 1 + lap_chunks * laps
 
 NOISE_SEED = int(os.environ.get("NOISE_SEED", "5042"))
 """Diffusion RNG seed per rollout (offset by clip index)."""
@@ -119,19 +137,19 @@ def _clip_prompt(uuid: str) -> str:
     return Path(path).read_text().strip()
 
 
-def tile_hdmap(hdmap: torch.Tensor) -> torch.Tensor:
+def tile_hdmap(hdmap: torch.Tensor, lap_chunks: int, laps: int) -> torch.Tensor:
     """Tile a ``[T, C, H, W]`` HDMap clip into the loop conditioning.
 
-    Layout: the first 5 frames (chunk 0) then ``LAPS`` copies of the next
-    ``8 * LAP_CHUNKS`` frames, so chunks ``1 + j * LAP_CHUNKS + i`` consume
+    Layout: the first 5 frames (chunk 0) then ``laps`` copies of the next
+    ``8 * lap_chunks`` frames, so chunks ``1 + j * lap_chunks + i`` consume
     identical pixels for every lap ``j``.
     """
-    lap_frames = 8 * LAP_CHUNKS
+    lap_frames = 8 * lap_chunks
     assert hdmap.shape[0] >= 5 + lap_frames, (
         f"clip has {hdmap.shape[0]} frames; need {5 + lap_frames}."
     )
     lap = hdmap[5 : 5 + lap_frames]
-    return torch.cat([hdmap[:5], lap.repeat(LAPS, 1, 1, 1)], dim=0)
+    return torch.cat([hdmap[:5], lap.repeat(laps, 1, 1, 1)], dim=0)
 
 
 def main() -> None:
@@ -155,7 +173,8 @@ def main() -> None:
             device="cpu",
             dtype=dtype,
         )
-        hdmap = tile_hdmap(hdmap)[None, None]  # [1, 1, T, C, H, W]
+        lap_chunks, laps, _ = clip_layout(c)
+        hdmap = tile_hdmap(hdmap, lap_chunks, laps)[None, None]  # [1, 1, T, C, H, W]
         first = _load_first_frame(
             frame_path,
             pixel_height=DEFAULT_VIDEO_HEIGHT,
@@ -186,6 +205,7 @@ def main() -> None:
             print(f"SKIP clip {c}: {out} exists", flush=True)
             continue
         uuid, prompt, hdmap, first = item
+        lap_chunks, laps, num_chunk = clip_layout(c)
         hdmap = hdmap.to(device)
         first = first.to(device)
 
@@ -198,7 +218,7 @@ def main() -> None:
             pipe,
             cache,
             hdmap_video=hdmap,
-            num_chunk=NUM_CHUNK,
+            num_chunk=num_chunk,
             noise_seed=NOISE_SEED + c,
         )
         save_clip(
@@ -208,9 +228,9 @@ def main() -> None:
             meta={
                 "uuid": uuid,
                 "prompt": prompt,
-                "num_chunk": NUM_CHUNK,
-                "lap_chunks": LAP_CHUNKS,
-                "laps": LAPS,
+                "num_chunk": num_chunk,
+                "lap_chunks": lap_chunks,
+                "laps": laps,
                 "noise_seed": NOISE_SEED + c,
             },
         )

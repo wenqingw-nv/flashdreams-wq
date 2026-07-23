@@ -68,9 +68,13 @@ scene, 5 = training val scene, 6-7 = never-seen scenarios."""
 
 SEED = int(os.environ.get("SEED", "5042"))
 
-ALPHA_STAR = {1000.0: 0.96, 803.0: 0.667}
-"""Unbiased alpha* per warped solver timestep (pairs-v2 photoreal gate);
-nearest-t lookup, matching the HY deploy convention."""
+ALPHA_STAR = {
+    float(kv.split(":")[0]): float(kv.split(":")[1])
+    for kv in os.environ.get("ALPHA_STAR", "1000:0.96,803:0.667").split(",")
+}
+"""Unbiased alpha* per warped solver timestep (default: pairs-v2 photoreal
+gate; override as ``ALPHA_STAR=t:a,t:a``); nearest-t lookup, matching the
+HY deploy convention."""
 
 
 def install_alpha_gate(transformer, network, mode: dict) -> None:

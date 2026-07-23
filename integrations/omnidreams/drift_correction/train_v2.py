@@ -83,10 +83,19 @@ SAVE_EVERY = 200
 CW_LOSS = float(os.environ.get("CW_LOSS", "0.5"))
 """Drift-contraction weight (paper-final value)."""
 
+SNAP_EVERY = int(os.environ.get("SNAP_EVERY", "0"))
+"""When > 0: also keep step-tagged snapshot copies (``<ckpt>_stepN.pt``)
+every SNAP_EVERY steps plus a running val-peak snapshot
+(``<ckpt>_valpeak.pt``, refreshed whenever val dag-R^2 improves at an eval
+point), so the sweep can compare checkpoints without retraining (the
+v2@600-vs-@1000 owner call)."""
+
 CLEAN_LAP = 2
 MIN_LAP = 4
 REPLAY_CHUNKS = 15
-ALPHA_STAR = (0.96, 0.667)
+ALPHA_STAR = tuple(
+    float(x) for x in os.environ.get("ALPHA_STAR", "0.96,0.667").split(",")
+)
 REL_V_EXCLUDE = 0.8
 N_VAL_CLIPS = 1
 """Same data conventions as ``train_v1`` (owner riders 2026-07-22); the
@@ -134,15 +143,16 @@ def main() -> None:
         float(pipe.diffusion_model.config.context_noise), device=device, dtype=dtype
     )
 
-    lap_chunks, laps, num_chunk = (
-        datas[0]["lap_chunks"],
-        datas[0]["laps"],
-        datas[0]["num_chunk"],
-    )
-    ks = training_ks(num_chunk, lap_chunks, laps)
+    # Per-clip lap geometry: pairs v3 mixes lap lengths across clips (the
+    # repeat-prior fix), so nothing may assume a shared lap_chunks.
+    ks_by_clip = [
+        training_ks(int(d["num_chunk"]), int(d["lap_chunks"]), int(d["laps"]))
+        for d in datas
+    ]
     print(
         f"{len(datas)} clips ({len(val_ids)} val) from {len(POOLS)} pools | "
-        f"{len(ks)} cells/clip | contraction w={CW_LOSS}",
+        f"lap_chunks {[int(d['lap_chunks']) for d in datas]} | cells/clip "
+        f"{[len(ks) for ks in ks_by_clip]} | contraction w={CW_LOSS}",
         flush=True,
     )
 
@@ -186,8 +196,8 @@ def main() -> None:
             p.data.copy_(state["lora"][i].to(p.device, p.dtype))
         print(f"warm start from {INIT}", flush=True)
 
-    def save(step: int) -> None:
-        tmp = CKPT.with_suffix(".tmp")
+    def save(step: int, path: Path = CKPT) -> None:
+        tmp = path.with_suffix(".tmp")
         torch.save(
             {
                 "lora": {i: p.detach().cpu() for i, p in enumerate(params)},
@@ -197,7 +207,7 @@ def main() -> None:
             },
             tmp,
         )
-        tmp.replace(CKPT)
+        tmp.replace(path)
 
     _device_clips: dict[int, dict] = {}
 
@@ -252,7 +262,8 @@ def main() -> None:
         """
         use_clip_text(c)
         d = to_device(c)
-        k = int(rng_.choice(ks))
+        lap_chunks = int(d["lap_chunks"])
+        k = int(rng_.choice(ks_by_clip[c]))
         t_idx = int(rng_.choice(n_steps, p=t_probs))
         t2_idx = int(rng_.choice(n_steps, p=t_probs))
         gen = d["latents"]
@@ -355,6 +366,7 @@ def main() -> None:
         return 1 - s_dag / n, 1 - s_con / n
 
     torch.set_grad_enabled(True)
+    best_vd = float("-inf")
     for step in range(start_step + 1, STEPS + 1):
         for pg in opt.param_groups:
             pg["lr"] = LR * min(1.0, step / WARMUP)
@@ -375,8 +387,15 @@ def main() -> None:
                 f" | |r|^2 {r_sq.item():.1f} | excluded {excl_str}",
                 flush=True,
             )
+            if SNAP_EVERY and vd > best_vd:
+                best_vd = vd
+                save(step, CKPT.with_name(f"{CKPT.stem}_valpeak.pt"))
+                print(f"val-peak snapshot at step {step} (dag-R^2 {vd:+.3f})",
+                      flush=True)
         if step % SAVE_EVERY == 0 or step == STEPS:
             save(step)
+        if SNAP_EVERY and step % SNAP_EVERY == 0:
+            save(step, CKPT.with_name(f"{CKPT.stem}_step{step}.pt"))
 
     vd, vc = val_r2(24)
     print(
