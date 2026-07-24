@@ -90,6 +90,26 @@ Queued fixes (owner 2026-07-24):
 Checkpoints: `outputs/lora_v1_v3.pt`, `outputs/lora_v2_v3{,_valpeak,_stepN}.pt`; sbs (sides in
 filename) under `outputs/eval_sweep_v3{,p}/`.
 
+## Gain-prediction analysis (owner arm 2026-07-24): gain*(t) = α*(t) × ρ(t)
+
+ρ(t) = per-timestep val R² (`TBIN_EVAL` in the trainers; `gain_predict.py`). Recorded 2026-07-24
+11:20 UTC. **PROSPECTIVE v4 line recorded BEFORE reading any v4 sweep scores** (scores.json did not
+exist yet — fresh probe confirmed):
+
+| host / ckpt | α*(t) | ρ(t) | predicted gain*(t) | arm ranking by rms-distance |
+|---|---|---|---|---|
+| OD v2-v3 valpeak (retro) | 0.96 / 0.667 | 0.444 / 0.536 | 0.426 / 0.358 | corrgate050 (0.04) < corr050 (0.11) < corrgate025 (0.19) < corrgate < corr |
+| OD v2-v4 valpeak (**prospective**) | 0.892 / 0.690 | 0.361 / 0.392 | 0.322 / 0.270 | **corrgate025 (0.098) ≈ corrgate050 (0.103)** < corr050 (0.21) < corrgate < corr — predicted optimum ≈ gate×0.36–0.39 |
+| OD v2-v4 final (prospective) | 0.892 / 0.690 | 0.331 / 0.381 | 0.295 / 0.263 | same ordering, slightly closer to 025 |
+| HY v2c2 (retro) | 0.81/0.53/0.53/0.58 | 0.51/0.54/0.54/0.47 | 0.42/0.29/0.29/0.27 | **corrgate050 (0.02)** < tsplit_a (0.11) < corrgate025 (0.16) < corrgate (0.29) < corr (0.63) |
+
+Retrospective verdict: **MIXED** — HOLDS on HY (the prediction ranks the arms exactly as the owner
+verdicts ordered them: 050 shipped-best, tsplit mixed, flat-025 fail, corrgate/corr worse); FAILS on
+the OmniDreams eyeball ordering (prediction puts corrgate050 over corrgate025, the owner shipped 025) —
+the predictor tracks drift-cut effectiveness while the OD eyeball optimum was artifact-free detail at
+lower gain. Prospective v4 test: prediction = near-tie 025/050 at the top of the instrument ranking;
+compare when the v4 sweep scores land.
+
 Verification notes (issue #1, 2026-07-23): scen6 = HF sample `239a869e-20a7-11ef-9e61-00044bf65d5c`
 (never seen by training). Eval rollouts use NON-tiled real HDMaps, so the 40-frame recurrence cannot
 come from the conditioning (HDMap autocorr shows no lag-40 peak). Whole-frame autocorrelation is NOT
