@@ -103,6 +103,19 @@ val clip is the last clip of the FIRST pool (round-0 held-out scene)."""
 
 SEED = int(os.environ.get("SEED", "0"))
 
+PAIR_SCHEME = os.environ.get("PAIR_SCHEME", "lap")
+"""``lap`` (v1-v3 loop pairs) or ``fork`` (pairs-v4 re-anchored forks);
+see ``train_v1.py`` / ``build_pairs_v4.py``."""
+
+UW = os.environ.get("UW", "0") == "1"
+"""Uncertainty-weighted DAgger term (per-token alpha* weights from
+``UW_DRAWS`` noise draws; see ``train_v1.py``). The contraction term stays
+unweighted: it penalizes accumulation of whatever residual remains, while
+the weights' job is to keep unpredictable content out of the *target* —
+recorded design choice 2026-07-24. ``UW=0`` = ablation arm."""
+
+UW_DRAWS = 2
+
 
 def lap_aligned(c: int, lap_chunks: int) -> int:
     """Map chunk ``c`` (>= lap 1) to its lap-:data:`CLEAN_LAP` counterpart."""
@@ -113,6 +126,20 @@ def lap_aligned(c: int, lap_chunks: int) -> int:
 def training_ks(num_chunk: int, lap_chunks: int, laps: int) -> list[int]:
     """Probe chunks in laps >= MIN_LAP with a successor chunk available."""
     return [k for k in range(1 + MIN_LAP * lap_chunks, num_chunk - 1)]
+
+
+def training_ks_fork(num_chunk: int, fork_starts: list[int]) -> list[int]:
+    """Fork-scheme cells past the first segment, successor available."""
+    return [k for k in range(int(fork_starts[1]), num_chunk - 1)]
+
+
+def clean_chunk(d: dict, gen: list[Tensor], j: int, lap_chunks: int) -> Tensor:
+    """Clean counterpart content for replayed chunk ``j`` (>= 1)."""
+    if PAIR_SCHEME == "fork":
+        starts = d["fork_starts"]
+        s = max(i for i, cs in enumerate(starts) if cs <= j)
+        return d["fork_latents"][s][j - int(starts[s])]
+    return gen[lap_aligned(j, lap_chunks)]
 
 
 def main() -> None:
@@ -145,10 +172,15 @@ def main() -> None:
 
     # Per-clip lap geometry: pairs v3 mixes lap lengths across clips (the
     # repeat-prior fix), so nothing may assume a shared lap_chunks.
-    ks_by_clip = [
-        training_ks(int(d["num_chunk"]), int(d["lap_chunks"]), int(d["laps"]))
-        for d in datas
-    ]
+    if PAIR_SCHEME == "fork":
+        ks_by_clip = [
+            training_ks_fork(int(d["num_chunk"]), d["fork_starts"]) for d in datas
+        ]
+    else:
+        ks_by_clip = [
+            training_ks(int(d["num_chunk"]), int(d["lap_chunks"]), int(d["laps"]))
+            for d in datas
+        ]
     print(
         f"{len(datas)} clips ({len(val_ids)} val) from {len(POOLS)} pools | "
         f"lap_chunks {[int(d['lap_chunks']) for d in datas]} | cells/clip "
@@ -214,10 +246,24 @@ def main() -> None:
     def to_device(c: int) -> dict:
         """Device-resident view of clip ``c`` (memoized)."""
         if c not in _device_clips:
+
+            def move(v):
+                if isinstance(v, list):
+                    return [move(x) for x in v]
+                return v.to(device, dtype) if isinstance(v, Tensor) else v
+
             _device_clips[c] = {
-                key: ([x.to(device) for x in v] if isinstance(v, list) else v)
+                key: move(v)
                 for key, v in datas[c].items()
-                if key in ("latents", "hdmaps", "lap_chunks", "num_chunk")
+                if key
+                in (
+                    "latents",
+                    "hdmaps",
+                    "lap_chunks",
+                    "num_chunk",
+                    "fork_starts",
+                    "fork_latents",
+                )
             }
         return _device_clips[c]
 
@@ -269,8 +315,10 @@ def main() -> None:
         gen = d["latents"]
         clean = list(gen)
         for j in range(max(1, k - REPLAY_CHUNKS), k + 1):
-            clean[j] = gen[lap_aligned(j, lap_chunks)]
-        z_t = make_zt(gen[k], t_idx, rng_)
+            clean[j] = clean_chunk(d, gen, j, lap_chunks)
+        n_draws = UW_DRAWS if UW else 1
+        z_ts = [make_zt(gen[k], t_idx, rng_) for _ in range(n_draws)]
+        z_t = z_ts[0]
         z_t2 = make_zt(gen[k + 1], t2_idx, rng_)
 
         with torch.no_grad():
@@ -278,10 +326,10 @@ def main() -> None:
             # Teacher/base at k (clean swap over the replay span).
             replay_window(clean, d["hdmaps"], k)
             tc.start(k)
-            v_clean = predict_v(z_t, t_idx, d["hdmaps"][k])
+            v_cleans = [predict_v(z, t_idx, d["hdmaps"][k]) for z in z_ts]
             tc.finalize(k)
             # Teacher/base at k+1 for the contraction target (the clean
-            # history now includes the lap-aligned chunk k).
+            # history now includes the counterpart chunk k).
             replay_window(clean, d["hdmaps"], k + 1)
             tc.start(k + 1)
             v_clean2 = predict_v(z_t2, t2_idx, d["hdmaps"][k + 1])
@@ -292,10 +340,19 @@ def main() -> None:
             tc.finalize(k + 1)
             replay_window(gen, d["hdmaps"], k)
             tc.start(k)
-            v_base = predict_v(z_t, t_idx, d["hdmaps"][k])
+            v_bases = [predict_v(z, t_idx, d["hdmaps"][k]) for z in z_ts]
             tc.finalize(k)
+        v_clean, v_base = v_cleans[0], v_bases[0]
         r_sq = (v_clean - v_base).square().sum()
         r2_sq = (v_clean2 - v_base2).square().sum()
+
+        w = None
+        if UW:
+            rs = torch.stack([vc - vb for vc, vb in zip(v_cleans, v_bases)])
+            mean_r = rs.mean(0)
+            var = rs.var(0, unbiased=True)
+            bias2 = (mean_r.square() - var / n_draws).clamp_min(0.0)
+            w = (bias2 / (bias2 + var + 1e-12)).detach()
 
         excl[c]["tested"] += 1
         rel_v = (r_sq.sqrt() / (v_base.norm() + 1e-9)).item()
@@ -310,7 +367,11 @@ def main() -> None:
         tc.start(k)
         with ctx:
             v_corr = predict_v(z_t, t_idx, d["hdmaps"][k])
-            dag = (v_corr - v_clean).square().sum() / (r_sq + 1e-8)
+            err = (v_corr - v_clean).square()
+            gap = (v_clean - v_base).square()
+            if w is not None:
+                err, gap = err * w, gap * w
+            dag = err.sum() / (gap.sum() + 1e-8)
             # Commit chunk k's corrected prediction with grad: recorded
             # functional KV + a numerically identical no-grad buffer twin.
             sig = sigmas[t_idx].to(dtype)

@@ -110,6 +110,23 @@ is a degenerate state (e.g. the clip-0 late-horizon collapse) and is
 rejected at draw time (the probes needed for the check are computed anyway;
 exclusions are logged per clip)."""
 
+PAIR_SCHEME = os.environ.get("PAIR_SCHEME", "lap")
+"""``lap`` (v1-v3 loop pairs) or ``fork`` (pairs-v4, ``build_pairs_v4.py``):
+the clean counterpart of chunk ``j`` comes from the re-anchored fork
+covering ``j`` instead of a lap-aligned revisit. Training cells then live
+past the first fork segment (drifted side deep, counterpart anchored)."""
+
+UW = os.environ.get("UW", "0") == "1"
+"""Uncertainty-weighted loss (owner arm 2026-07-24): estimate the
+per-token systematic share of the drift residual from ``UW_DRAWS`` noise
+draws at the same cell — ``w = bias^2 / (bias^2 + var)``, the per-token
+alpha* — and weight both loss numerator and denominator by ``w`` so the
+LoRA never learns to chase unpredictable content (foliage). Config flag:
+``UW=0`` keeps the unweighted objective as the ablation arm."""
+
+UW_DRAWS = 2
+"""Noise draws for the weight estimate (adds 2 no-grad teacher forwards)."""
+
 N_VAL_CLIPS = 1
 SEED = int(os.environ.get("SEED", "0"))
 
@@ -129,6 +146,21 @@ def training_ks(num_chunk: int, lap_chunks: int, laps: int) -> list[int]:
     differ only in content cleanliness.
     """
     return [k for k in range(1 + MIN_LAP * lap_chunks, num_chunk)]
+
+
+def training_ks_fork(num_chunk: int, fork_starts: list[int]) -> list[int]:
+    """Fork-scheme cells: past the first segment (drifted side is deep
+    while the counterpart is at most SEG_CHUNKS from its anchor)."""
+    return [k for k in range(int(fork_starts[1]), num_chunk)]
+
+
+def clean_chunk(d: dict, gen: list[Tensor], j: int, lap_chunks: int) -> Tensor:
+    """Clean counterpart content for replayed chunk ``j`` (>= 1)."""
+    if PAIR_SCHEME == "fork":
+        starts = d["fork_starts"]
+        s = max(i for i, cs in enumerate(starts) if cs <= j)
+        return d["fork_latents"][s][j - int(starts[s])]
+    return gen[lap_aligned(j, lap_chunks)]
 
 
 def main() -> None:
@@ -152,10 +184,15 @@ def main() -> None:
     datas = [load_clip(p, "cpu", dtype) for p in clips]
     # Per-clip lap geometry: pairs v3 mixes lap lengths across clips (the
     # repeat-prior fix), so nothing may assume a shared lap_chunks.
-    ks_by_clip = [
-        training_ks(int(d["num_chunk"]), int(d["lap_chunks"]), int(d["laps"]))
-        for d in datas
-    ]
+    if PAIR_SCHEME == "fork":
+        ks_by_clip = [
+            training_ks_fork(int(d["num_chunk"]), d["fork_starts"]) for d in datas
+        ]
+    else:
+        ks_by_clip = [
+            training_ks(int(d["num_chunk"]), int(d["lap_chunks"]), int(d["laps"]))
+            for d in datas
+        ]
     train_ids = list(range(len(datas) - N_VAL_CLIPS))
     val_ids = list(range(len(datas) - N_VAL_CLIPS, len(datas)))
     print(
@@ -222,10 +259,24 @@ def main() -> None:
     def to_device(c: int) -> dict:
         """Device-resident view of clip ``c`` (memoized; ~0.3 GB per clip)."""
         if c not in _device_clips:
+
+            def move(v):
+                if isinstance(v, list):
+                    return [move(x) for x in v]
+                return v.to(device, dtype) if isinstance(v, Tensor) else v
+
             _device_clips[c] = {
-                key: ([x.to(device) for x in v] if isinstance(v, list) else v)
+                key: move(v)
                 for key, v in datas[c].items()
-                if key in ("latents", "hdmaps", "lap_chunks", "num_chunk")
+                if key
+                in (
+                    "latents",
+                    "hdmaps",
+                    "lap_chunks",
+                    "num_chunk",
+                    "fork_starts",
+                    "fork_latents",
+                )
             }
         return _device_clips[c]
 
@@ -276,25 +327,39 @@ def main() -> None:
         gen = d["latents"]
         clean = list(gen)
         for j in range(max(1, k - REPLAY_CHUNKS), k):
-            clean[j] = gen[lap_aligned(j, lap_chunks)]
+            clean[j] = clean_chunk(d, gen, j, lap_chunks)
         x0 = gen[k]
         sig = sigmas[t_idx].to(dtype)
-        g = torch.Generator(device=device).manual_seed(int(rng_.integers(2**31)))
-        z_t = (1 - sig) * x0 + sig * torch.randn(
-            x0.shape, device=device, dtype=dtype, generator=g
-        )
+        n_draws = UW_DRAWS if UW else 1
+        z_ts = []
+        for _ in range(n_draws):
+            g = torch.Generator(device=device).manual_seed(int(rng_.integers(2**31)))
+            z_ts.append(
+                (1 - sig) * x0
+                + sig
+                * torch.randn(x0.shape, device=device, dtype=dtype, generator=g)
+            )
 
         with torch.no_grad():
             set_lora_scale(network, 0.0)
             replay_window(clean, d["hdmaps"], k)
             tc.start(k)
-            v_clean = predict_v(z_t, t_idx, d["hdmaps"][k])
+            v_cleans = [predict_v(z, t_idx, d["hdmaps"][k]) for z in z_ts]
             tc.finalize(k)
             replay_window(gen, d["hdmaps"], k)
             tc.start(k)
-            v_base = predict_v(z_t, t_idx, d["hdmaps"][k])
+            v_bases = [predict_v(z, t_idx, d["hdmaps"][k]) for z in z_ts]
             tc.finalize(k)
+        v_clean, v_base = v_cleans[0], v_bases[0]
         r_target_sq = (v_clean - v_base).square().sum()
+
+        w = None
+        if UW:
+            rs = torch.stack([vc - vb for vc, vb in zip(v_cleans, v_bases)])
+            mean_r = rs.mean(0)
+            var = rs.var(0, unbiased=True)
+            bias2 = (mean_r.square() - var / n_draws).clamp_min(0.0)
+            w = (bias2 / (bias2 + var + 1e-12)).detach()
 
         excl[c]["tested"] += 1
         rel_v = (r_target_sq.sqrt() / (v_base.norm() + 1e-9)).item()
@@ -307,8 +372,12 @@ def main() -> None:
             replay_window(gen, d["hdmaps"], k)  # LoRA-scaled replay, no grad
         tc.start(k)
         with torch.enable_grad() if grad else torch.no_grad():
-            v_corr = predict_v(z_t, t_idx, d["hdmaps"][k])
-            loss = (v_corr - v_clean).square().sum() / (r_target_sq + 1e-8)
+            v_corr = predict_v(z_ts[0], t_idx, d["hdmaps"][k])
+            err = (v_corr - v_clean).square()
+            gap = (v_clean - v_base).square()
+            if w is not None:
+                err, gap = err * w, gap * w
+            loss = err.sum() / (gap.sum() + 1e-8)
         tc.finalize(k)
         return loss, r_target_sq
 

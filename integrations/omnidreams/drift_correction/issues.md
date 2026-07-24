@@ -52,14 +52,29 @@ Queued fixes (owner 2026-07-24):
    correction faster than it restores sharpness. Artifacts: `outputs/eval_lp{1,2}_v3p/` (scores,
    sbs, `eval_lp2_v3p/lp_recheck/` frame stacks). Sweep-side monotonicity note: σ2 beat σ1 on BOTH
    axes (single-seed noise or gate interaction — do not extrapolate to σ>2 without a fresh bar).
-2. **HOLD for owner GO — pairs-v4, non-looping conditioning**: stitch distinct HDMap segments per
-   training rollout (no lap tiling; content never recurs). Available: 32 single-view HF clips x ~80 s
-   authentic HDMap (~2400 frames) — a single clip already covers a full 645-frame rollout untiled, and
-   segments can be drawn across clips without replacement. Open design point: without revisits there is
-   no lap-aligned clean counterpart — candidate replacement is segment-fresh short rollouts (low drift by
-   construction) replayed at the long rollout's absolute indices via the existing forged-index machinery;
-   seed inheritance at segment boundaries is the known risk to gate first. Estimated cost: pairs ~1.5-2 h
-   (2x rollouts) · v1+v2 retrain ~5-6 h · sweep+scoring ~1.5 h => ~9-10 h end-to-end.
+1b. **corrgate025 gentle dial (owner fallback arm, 2026-07-24)** — v2-v3 val-peak at α*(t)×0.25
+   (`eval_g025_v3_valpeak`; final ckpt run pending): Δ +0.99 (bar ≤ +1.5 PASS; 60% cut) · MUSIQ 50.1 >
+   base · dyn 13.8 (−17%) · **sharpness 0.598 vs bar ≥ 0.80 FAIL** (scene-mean; driven by scen7 0.48 vs
+   base 1.16 and scen5 0.45). BUT the explicit visual checks PASS: scen7 trees keep their leaves through
+   f560 (vs bare at ×0.5), scen6 foliage/palms persist with varied roadside (`g025_recheck/` stacks).
+   NOT auto-flagged as interim ship (numeric bar missed); owner eyeball may overrule — sbs under
+   `outputs/eval_g025_v3_valpeak/`. Repeated-street-view: still present (training-side, not counted).
+2. **HOLD lifted — owner GO 2026-07-24 — pairs-v4, non-looping conditioning (RUNNING)**: stitch distinct HDMap segments per
+   combined round, both changes behind flags (`build_pairs_v4.py`, `PAIR_SCHEME=fork`, `UW=1`):
+   (a) conditioning = each clip's OWN continuous 645-frame HDMap (the samples ship ~80 s) — no tiling,
+   no stitching, no teleports, content never recurs. Clean-counterpart design decision (pre-stated):
+   **re-anchored forks** — every 20 chunks fork a fresh image-anchored rollout seeded by re-encoding the
+   drifted rollout's own decoded frame at the fork, rolled over the same upcoming HDMap window
+   (5-frame anchor chunk covers the tail of the previous chunk, so fork chunk 1+m consumes exactly
+   chunk c_s+m's conditioning — no lag). Rationale: the only content-matched cleaner-content source
+   without revisits; targets the structure/sharpness drift share; known limitation: the anchor inherits
+   low-frequency color drift, so that share is absent from the target. Gate bar (pre-stated, BEFORE
+   training): unbiased α*(t=1000) ≥ 0.4 AND rel_v(t=1000) ≥ 0.15 (pairs-v2 reference 0.96/0.45) — fail
+   ⇒ STOP, fork design dead. (b) uncertainty-weighted loss: per-token α* weights from 2 noise draws
+   (`w = bias²/(bias²+var)`, weights on the DAgger term; contraction unweighted by design — it penalizes
+   accumulation of whatever residual remains while the weights keep unpredictable content out of the
+   target; `UW=0` = ablation arm). Chain: pairs → gate → v1-v4 (R² ≥ 0.15) → DAgger → v2-v4 (dag-R² ≥
+   0.15, step-tagged + val-peak) → dial sweeps (final + val-peak, grid now incl. corrgate025) → report.
 
 Checkpoints: `outputs/lora_v1_v3.pt`, `outputs/lora_v2_v3{,_valpeak,_stepN}.pt`; sbs (sides in
 filename) under `outputs/eval_sweep_v3{,p}/`.

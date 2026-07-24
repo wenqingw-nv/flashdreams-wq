@@ -191,6 +191,7 @@ def main() -> None:
         "corr050": 0.5,
         "corrgate": ("gate", 1.0),
         "corrgate050": ("gate", 0.5),
+        "corrgate025": ("gate", 0.25),
         "corr": 1.0,
     }
     if CONFIGS:

@@ -70,11 +70,20 @@ OUT_PATH = Path(
 )
 """Aggregated per-timestep and per-depth results."""
 
-PROBE_CHUNKS = (24, 39, 54, 69, 79)
-"""Probe chunks spanning ~6.6 s to ~21.4 s of rollout. All satisfy
-``(k - 1) % LAP_CHUNKS >= 3`` so the 3-chunk KV window lies inside one lap
-(no conditioning-teleport contamination), and all sit in laps >= 4 (owner
-decision 2026-07-22: drifted side well past the lap-2 clean reference)."""
+PROBE_CHUNKS = tuple(
+    int(x) for x in os.environ.get("PROBE_CHUNKS", "24,39,54,69,79").split(",")
+)
+"""Probe chunks spanning ~6.6 s to ~21.4 s of rollout. Lap default: all
+satisfy ``(k - 1) % LAP_CHUNKS >= 3`` so the 3-chunk KV window lies inside
+one lap (no conditioning-teleport contamination), and all sit in laps >= 4
+(owner decision 2026-07-22: drifted side well past the lap-2 clean
+reference). Fork pairs (v4) pass their own set with the window inside one
+fork segment."""
+
+PAIR_SCHEME = os.environ.get("PAIR_SCHEME", "lap")
+"""``lap`` (v1-v3 loop pairs) or ``fork`` (v4 re-anchored fork pairs:
+clean counterpart of chunk ``j`` = fork ``s`` with the largest
+``fork_starts[s] <= j``, chunk ``j - fork_starts[s]`` of its latents)."""
 
 WINDOW_CHUNKS = 3
 """KV-window span in chunks (``window_size_t=6`` / ``len_t=2``)."""
@@ -111,9 +120,18 @@ def histories(d: dict, k: int) -> tuple[list[Tensor], list[Tensor], list[Tensor]
     gen = [d["latents"][j] for j in range(k)]
     clean = list(gen)
     for j in window_indices(k):
-        src = lap_aligned(j, lap_chunks)
-        if src != j:
-            clean[j] = d["latents"][src]
+        if j == 0:
+            continue  # image-anchored chunk, never remapped
+        if PAIR_SCHEME == "fork":
+            starts = d["fork_starts"]
+            s = max(i for i, cs in enumerate(starts) if cs <= j)
+            clean[j] = d["fork_latents"][s][j - starts[s]].to(
+                gen[0].device, gen[0].dtype
+            )
+        else:
+            src = lap_aligned(j, lap_chunks)
+            if src != j:
+                clean[j] = d["latents"][src]
     hdmaps = [d["hdmaps"][j] for j in range(k)]
     return gen, clean, hdmaps
 
