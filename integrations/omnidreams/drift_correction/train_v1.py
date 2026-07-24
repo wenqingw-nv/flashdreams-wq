@@ -130,6 +130,12 @@ UW_DRAWS = 2
 N_VAL_CLIPS = 1
 SEED = int(os.environ.get("SEED", "0"))
 
+TBIN_EVAL = int(os.environ.get("TBIN_EVAL", "0"))
+"""When > 0: no training — load CKPT, evaluate val R^2 binned per solver
+timestep (TBIN_EVAL cells per bin) and print ``TBIN t=<t> R2=<r>`` lines
+(the reliability factor rho(t) for the gain-prediction analysis, owner arm
+2026-07-24), then exit."""
+
 
 def lap_aligned(c: int, lap_chunks: int) -> int:
     """Map chunk ``c`` (>= lap 1) to its lap-:data:`CLEAN_LAP` counterpart."""
@@ -312,7 +318,7 @@ def main() -> None:
     excl = {c: {"tested": 0, "excluded": 0} for c in range(len(datas))}
 
     def sample_losses(
-        c: int, grad: bool, rng_: np.random.Generator
+        c: int, grad: bool, rng_: np.random.Generator, t_forced: int | None = None
     ) -> tuple[Tensor, Tensor] | None:
         """One drift-pair sample -> (normalized v-space loss, r_target sq-norm).
 
@@ -323,7 +329,7 @@ def main() -> None:
         d = to_device(c)
         lap_chunks = int(d["lap_chunks"])
         k = int(rng_.choice(ks_by_clip[c]))
-        t_idx = int(rng_.choice(n_steps, p=t_probs))
+        t_idx = int(rng_.choice(n_steps, p=t_probs)) if t_forced is None else t_forced
         gen = d["latents"]
         clean = list(gen)
         for j in range(max(1, k - REPLAY_CHUNKS), k):
@@ -382,11 +388,14 @@ def main() -> None:
         return loss, r_target_sq
 
     def draw_losses(
-        ids: list[int], grad: bool, rng_: np.random.Generator
+        ids: list[int],
+        grad: bool,
+        rng_: np.random.Generator,
+        t_forced: int | None = None,
     ) -> tuple[Tensor, Tensor]:
         """Redraw until a non-degenerate cell is sampled."""
         while True:
-            out = sample_losses(int(rng_.choice(ids)), grad, rng_)
+            out = sample_losses(int(rng_.choice(ids)), grad, rng_, t_forced)
             if out is not None:
                 return out
 
@@ -430,6 +439,19 @@ def main() -> None:
         assert rel < 2e-2, "truncated replay too far from full-prefix replay"
 
     replay_equivalence_check()
+
+    if TBIN_EVAL:
+        # rho(t) for the gain-prediction analysis: val R^2 per solver step.
+        for t_idx in range(n_steps):
+            vrng = np.random.default_rng(1234)
+            s = 0.0
+            for _ in range(TBIN_EVAL):
+                loss, _ = draw_losses(val_ids, False, vrng, t_idx)
+                s += loss.item()
+            r2 = 1 - s / TBIN_EVAL
+            print(f"TBIN t={int(timesteps[t_idx])} R2={r2:+.4f}", flush=True)
+        print("TBIN-DONE", flush=True)
+        return
 
     torch.set_grad_enabled(True)
     for step in range(start_step + 1, STEPS + 1):

@@ -223,7 +223,11 @@ def main() -> None:
         return x0_clean, x0_base
 
     def sample_losses(
-        pool_id: int, c: int, grad: bool, fid_w: float = 0.0
+        pool_id: int,
+        c: int,
+        grad: bool,
+        fid_w: float = 0.0,
+        t_forced: int | None = None,
     ) -> tuple[Tensor, Tensor]:
         """One sample -> (dagger loss, contraction loss)."""
         # Pools differ in size (round-1 regenerates a train-split prefix);
@@ -236,7 +240,7 @@ def main() -> None:
         }
         lap = d["lap_latents"]
         k = int(rng.choice(ks_for(d)))
-        t_idx = int(rng.choice(n_steps, p=t_probs))
+        t_idx = int(rng.choice(n_steps, p=t_probs)) if t_forced is None else t_forced
         ctrl = make_ctrl(d, k, device=device, dtype=dtype)
         h_gen = history_of(d, k)
         h_clean = clean_counterfactual(
@@ -346,6 +350,23 @@ def main() -> None:
             l_dag, _ = sample_losses(0, int(rng.choice(val_ids)), grad=False)
             s += l_dag.item()
         return s / n
+
+    if int(os.environ.get("TBIN_EVAL", "0")):
+        # rho(t) for the gain-prediction analysis (owner arm 2026-07-24):
+        # val dagger-R^2 per solver timestep on the INIT checkpoint.
+        n = int(os.environ["TBIN_EVAL"])
+        for t_idx in range(n_steps):
+            s = 0.0
+            for _ in range(n):
+                l_dag, _ = sample_losses(
+                    0, int(rng.choice(val_ids)), grad=False, t_forced=t_idx
+                )
+                s += l_dag.item()
+            print(
+                f"TBIN t={int(timesteps[t_idx])} R2={1 - s / n:+.4f}", flush=True
+            )
+        print("TBIN-DONE", flush=True)
+        return
 
     torch.set_grad_enabled(True)
     for step in range(1, STEPS + 1):
