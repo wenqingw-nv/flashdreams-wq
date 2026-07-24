@@ -102,6 +102,19 @@ def main() -> None:
                 "corrgate" if scale == 1.0 else f"corrgate{scale:.2f}".replace(".", "")
             )
             configs[name] = ("gate", scale)
+    # TSPLIT="a:0.5,0.5,0.25,0.25;b:0.5,0.5,0.5,0.25" adds t-split gain
+    # schedules (owner arm 2026-07-24): the listed gains map onto the solver
+    # timesteps in GATE_ALPHA order (high t first) and compose with alpha*(t).
+    from _rollout import GATE_ALPHA
+
+    for spec in os.environ.get("TSPLIT", "").split(";"):
+        if not spec.strip():
+            continue
+        name, gains_s = spec.split(":")
+        gains = [float(g) for g in gains_s.split(",")]
+        ts = sorted(GATE_ALPHA, reverse=True)
+        assert len(gains) == len(ts), (gains, ts)
+        configs[f"corrtsplit_{name.strip()}"] = ("sched", dict(zip(ts, gains)))
 
     runner = None
     network = None

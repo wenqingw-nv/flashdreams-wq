@@ -141,7 +141,13 @@ def install_alpha_gate(runner: Any, network: Any, mode: dict) -> None:
         if isinstance(gain, tuple):
             t = float(kwargs["timestep"].reshape(-1).max())
             alpha = min(GATE_ALPHA.items(), key=lambda kv: abs(kv[0] - t))[1]
-            set_lora_scale(network, alpha * gain[1])
+            if gain[0] == "sched":
+                # t-split gain schedule (owner arm 2026-07-24): per-step
+                # gain composed with alpha*(t), nearest-t lookup.
+                g = min(gain[1].items(), key=lambda kv: abs(kv[0] - t))[1]
+            else:
+                g = gain[1]
+            set_lora_scale(network, alpha * g)
         return orig_pf(*args, **kwargs)
 
     transformer.predict_flow = gated_pf
