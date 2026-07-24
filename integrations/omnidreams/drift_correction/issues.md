@@ -59,6 +59,9 @@ Queued fixes (owner 2026-07-24):
    f560 (vs bare at ×0.5), scen6 foliage/palms persist with varied roadside (`g025_recheck/` stacks).
    NOT auto-flagged as interim ship (numeric bar missed); owner eyeball may overrule — sbs under
    `outputs/eval_g025_v3_valpeak/`. Repeated-street-view: still present (training-side, not counted).
+   Final-ckpt variant (`eval_g025_v3_final`): Δ +2.49 ≈ base (no drift cut) · sharp 0.552 — strictly
+   worse; **val-peak is the only corrgate025 candidate**. Gate v4 side-note: the gentle dial's Δ cut is
+   checkpoint-sensitive; val-peak@300 generalizes, step-1000 does not.
 2. **HOLD lifted — owner GO 2026-07-24 — pairs-v4, non-looping conditioning (RUNNING)**: stitch distinct HDMap segments per
    combined round, both changes behind flags (`build_pairs_v4.py`, `PAIR_SCHEME=fork`, `UW=1`):
    (a) conditioning = each clip's OWN continuous 645-frame HDMap (the samples ship ~80 s) — no tiling,
