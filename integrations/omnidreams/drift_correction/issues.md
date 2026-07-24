@@ -90,6 +90,29 @@ Queued fixes (owner 2026-07-24):
 Checkpoints: `outputs/lora_v1_v3.pt`, `outputs/lora_v2_v3{,_valpeak,_stepN}.pt`; sbs (sides in
 filename) under `outputs/eval_sweep_v3{,p}/`.
 
+## pairs-v4 sweep results (2026-07-24, scenes 0/5/6/7, both ckpts; sbs under `eval_sweep_v4{,p}/`)
+
+| arm (scene-mean) | Δ-drift | MUSIQ | dyn | latesim | sharp |
+|---|---|---|---|---|---|
+| base | +2.44 | 49.1 | 16.6 | 0.808 | 0.869 |
+| v2-v3 vp @025 (interim ship) | +0.99 | 50.1 | 13.8 | 0.797 | 0.598 |
+| **v4-valpeak @025** | **+1.26** | **48.7** | 12.5 | 0.778 | **0.94 (> base — first arm ever)** |
+| v4-final @025 | +1.88 | 47.9 | 13.4 | 0.779 | 0.805 |
+| v4-valpeak @050 | +9.16 | 37.1 | 9.7 | 0.658 | 0.414 |
+
+The fork+UW recipe fixed the blur axis (sharpness 0.94 > base; scen7 trees keep leaves through f560,
+no pulse — `eval_sweep_v4p/v4_recheck/` stacks) at a smaller Δ cut than the interim ship (48% vs 60%).
+Explicit scen6 checks: crosswalk rendered; NO repeated building/shop rows; the f600 trailer row is
+conditioning-consistent (base shows it too); residual: roadside self-similarity 0.433 vs base 0.382
+(v2 was 0.502; v3 0.374) and slightly stippled canopies — owner eyeball to weigh. corrgate050
+catastrophically overshoots on v4 (Δ +9.2, MUSIQ 37) — the working dial is ×0.25.
+**Deploy recommendation: PROVISIONAL — v4-valpeak @ α*(t)×0.25 as the new candidate vs the interim
+ship (blur fixed, drift cut slightly smaller); owner eyeball decides.**
+
+Prospective-prediction outcome (see analysis below, recorded pre-sweep): top-1 HIT (corrgate025
+predicted first by 0.098 vs 0.103) but the predicted near-tie with corrgate050 was badly wrong (050
+collapsed) — the α*×ρ magnitude is right at the optimum but the metric is too flat to flag overshoot.
+
 ## Gain-prediction analysis (owner arm 2026-07-24): gain*(t) = α*(t) × ρ(t)
 
 ρ(t) = per-timestep val R² (`TBIN_EVAL` in the trainers; `gain_predict.py`). Recorded 2026-07-24
@@ -107,8 +130,7 @@ Retrospective verdict: **MIXED** — HOLDS on HY (the prediction ranks the arms 
 verdicts ordered them: 050 shipped-best, tsplit mixed, flat-025 fail, corrgate/corr worse); FAILS on
 the OmniDreams eyeball ordering (prediction puts corrgate050 over corrgate025, the owner shipped 025) —
 the predictor tracks drift-cut effectiveness while the OD eyeball optimum was artifact-free detail at
-lower gain. Prospective v4 test: prediction = near-tie 025/050 at the top of the instrument ranking;
-compare when the v4 sweep scores land.
+lower gain. Prospective v4 test OUTCOME (sweep landed after the prediction): top-1 HIT / near-tie MISS — overall verdict stays **MIXED**.
 
 Verification notes (issue #1, 2026-07-23): scen6 = HF sample `239a869e-20a7-11ef-9e61-00044bf65d5c`
 (never seen by training). Eval rollouts use NON-tiled real HDMaps, so the 40-frame recurrence cannot
