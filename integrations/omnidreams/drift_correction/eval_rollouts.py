@@ -38,11 +38,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import torch
 from _host import build_pipeline, capture_rollout
 from _lora import apply_lora, load_lora, set_lora_scale, unwrap_compiled
-from build_pairs import _clip_prompt, _list_sample_uuids
+from build_pairs import _clip_prompt, _list_sample_uuids, _sample_files
 from omnidreams.runner import (
     DEFAULT_VIDEO_HEIGHT,
     DEFAULT_VIDEO_WIDTH,
-    _ensure_hf_single_view_example_data_synced,
     _load_first_frame,
     _load_video,
     _write_video,
@@ -157,7 +156,7 @@ def main() -> None:
     inputs = []
     for sid in SCENARIO_IDS:
         uuid = uuids[sid]
-        (hdmap_path,), (frame_path,) = _ensure_hf_single_view_example_data_synced(uuid)
+        (hdmap_path,), (frame_path,) = _sample_files(uuid)
         hdmap = _load_video(
             hdmap_path,
             pixel_height=DEFAULT_VIDEO_HEIGHT,

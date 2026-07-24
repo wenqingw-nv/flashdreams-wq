@@ -57,11 +57,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import torch
 from _host import build_pipeline, capture_rollout, save_clip
-from build_pairs import _clip_prompt, _list_sample_uuids
+from build_pairs import _clip_prompt, _list_sample_uuids, _sample_files
 from omnidreams.runner import (
     DEFAULT_VIDEO_HEIGHT,
     DEFAULT_VIDEO_WIDTH,
-    _ensure_hf_single_view_example_data_synced,
     _load_first_frame,
     _load_video,
     _write_video,
@@ -106,7 +105,7 @@ def main() -> None:
         if (OUT_DIR / f"clip_{c:02d}.pt").exists():
             inputs.append(None)
             continue
-        (hdmap_path,), (frame_path,) = _ensure_hf_single_view_example_data_synced(uuid)
+        (hdmap_path,), (frame_path,) = _sample_files(uuid)
         hdmap = _load_video(
             hdmap_path,
             pixel_height=DEFAULT_VIDEO_HEIGHT,

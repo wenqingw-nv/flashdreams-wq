@@ -108,7 +108,17 @@ states the deployed corrector actually visits."""
 
 
 def _list_sample_uuids(n: int) -> list[str]:
-    """Return the first ``n`` single-view sample UUIDs, alphabetically."""
+    """Return the first ``n`` single-view sample UUIDs, alphabetically.
+
+    ``SAMPLE_UUIDS`` (comma list) bypasses the HF listing API — the shared
+    IP rate limit killed three pipeline stages on 2026-07-24; every consumer
+    already has the files in the local HF cache, only this listing needed
+    the network.
+    """
+    if os.environ.get("SAMPLE_UUIDS"):
+        uuids = os.environ["SAMPLE_UUIDS"].split(",")
+        assert len(uuids) >= n, f"SAMPLE_UUIDS lists only {len(uuids)} clips"
+        return uuids[:n]
     from huggingface_hub import HfApi
     from huggingface_hub.hf_api import RepoFolder
 
@@ -125,8 +135,35 @@ def _list_sample_uuids(n: int) -> list[str]:
     return uuids[:n]
 
 
+def _sample_files(uuid: str) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+    """Cache-first ``((hdmap,), (first_frame,))`` resolution for a sample.
+
+    The runner's ``_ensure_hf_single_view_example_data_synced`` lists the HF
+    repo per clip even when every file is already local; the shared IP rate
+    limit killed three pipeline stages on 2026-07-24. Fall back to the
+    network path only on a cache miss.
+    """
+    root = (
+        Path.home()
+        / ".cache/huggingface/hub/datasets--nvidia--omni-dreams-samples/snapshots"
+    )
+    hits = sorted(root.glob(f"*/data/single_view/{uuid}/*_hdmap.mp4"))
+    for h in hits:
+        frame = h.parent / "first_frame.png"
+        if frame.exists():
+            return (h,), (frame,)
+    return _ensure_hf_single_view_example_data_synced(uuid)
+
+
 def _clip_prompt(uuid: str) -> str:
-    """Fetch the clip's own prompt from the dataset."""
+    """Fetch the clip's own prompt from the dataset (cache-first)."""
+    root = (
+        Path.home()
+        / ".cache/huggingface/hub/datasets--nvidia--omni-dreams-samples/snapshots"
+    )
+    hits = sorted(root.glob(f"*/data/single_view/{uuid}/prompt.txt"))
+    if hits:
+        return hits[0].read_text().strip()
     from huggingface_hub import hf_hub_download
 
     path = hf_hub_download(
@@ -165,7 +202,7 @@ def main() -> None:
         if (OUT_DIR / f"clip_{c:02d}.pt").exists():
             inputs.append(None)
             continue
-        (hdmap_path,), (frame_path,) = _ensure_hf_single_view_example_data_synced(uuid)
+        (hdmap_path,), (frame_path,) = _sample_files(uuid)
         hdmap = _load_video(
             hdmap_path,
             pixel_height=DEFAULT_VIDEO_HEIGHT,
