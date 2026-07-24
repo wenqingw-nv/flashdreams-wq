@@ -208,13 +208,13 @@ class OmnidreamsRunnerConfig(RunnerConfig):
     """Clean Forcing drift-corrector LoRA checkpoint. ``None`` disables
     correction. When set, the corrector deploys at
     ``alpha*(t) * drift_corrector_gain`` per denoise step (see
-    ``omnidreams/_drift_corrector.py``). Interim ship (owner eyeball PASS
+    ``omnidreams/_drift_corrector.py``). SHIPPED config (owner decision
     2026-07-24): ``drift_correction/outputs/lora_v2_v3_valpeak.pt`` at the
-    default gain."""
+    default gain (md5 84beb8c014346833ce182310373b5d32)."""
 
     drift_corrector_gain: float = 0.25
     """Global gain composed with the per-step ``alpha*(t)`` gate profile;
-    the interim ship configuration (``corrgate025``) is 0.25."""
+    the shipped configuration (``corrgate025``) is 0.25."""
 
 
 class OmnidreamsRunner(Runner[OmnidreamsRunnerConfig, OmnidreamsPipeline]):

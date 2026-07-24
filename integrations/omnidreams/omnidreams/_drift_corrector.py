@@ -17,8 +17,8 @@
 
 Deploys the trained corrector LoRA (``drift_correction/train_v2.py``
 checkpoints) on a built :class:`~omnidreams.runner.OmnidreamsRunner`'s
-pipeline at ``alpha*(t) * gain`` per denoise step. Interim ship (owner
-eyeball PASS 2026-07-24): ``lora_v2_v3_valpeak.pt`` at gain 0.25
+pipeline at ``alpha*(t) * gain`` per denoise step. SHIPPED config (owner
+decision 2026-07-24): ``lora_v2_v3_valpeak.pt`` at gain 0.25
 (``corrgate025`` — best trees/foliage detail and consistency, drift
 Delta +0.99 vs base +2.44). Mirrors the HY-WorldPlay deploy module
 (``hy_worldplay/_drift_corrector.py``); self-contained so the production
@@ -119,8 +119,8 @@ def apply_drift_corrector(runner: Any, checkpoint: Path, gain: float) -> str:
         checkpoint: Corrector LoRA checkpoint (``train_v1``/``train_v2``
             format: a dict whose ``"lora"`` entry maps load-order indices
             to tensors).
-        gain: Global gain composed with the alpha*(t) profile; the interim
-            ship configuration (``corrgate025``) is 0.25.
+        gain: Global gain composed with the alpha*(t) profile; the
+            shipped configuration (``corrgate025``) is 0.25.
 
     Returns:
         A log-line string describing the deployed configuration.
