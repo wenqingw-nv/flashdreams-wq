@@ -52,6 +52,14 @@ Queued fixes (owner 2026-07-24):
    correction faster than it restores sharpness. Artifacts: `outputs/eval_lp{1,2}_v3p/` (scores,
    sbs, `eval_lp2_v3p/lp_recheck/` frame stacks). Sweep-side monotonicity note: σ2 beat σ1 on BOTH
    axes (single-seed noise or gate interaction — do not extrapolate to σ>2 without a fresh bar).
+1a. **INTERIM SHIP (owner eyeball PASS 2026-07-24): `lora_v2_v3_valpeak.pt` @ α*(t)×0.25
+   (corrgate025)** — owner verdict on `eval_g025_v3_valpeak`: best of all arms so far; better
+   trees/foliage detail and consistency, less repeated street view. The instrument sharpness bar
+   (0.598 < 0.80) is OVERRULED by the eyeball (5th eyeball-over-instrument case on this project;
+   owner wrote "corrgate50" but the dir's only arm is corrgate025 — recorded as corrgate025).
+   Residual artifact ON RECORD: scen6 still shows some repeated rows of buildings/shops and 3
+   repeated white trucks — this is the pre-stated explicit check for the v4 sweep, and corrgate025
+   is now the reference dial the v4 sweep must beat (corrgate025 is in the v4 dial grid).
 1b. **corrgate025 gentle dial (owner fallback arm, 2026-07-24)** — v2-v3 val-peak at α*(t)×0.25
    (`eval_g025_v3_valpeak`; final ckpt run pending): Δ +0.99 (bar ≤ +1.5 PASS; 60% cut) · MUSIQ 50.1 >
    base · dyn 13.8 (−17%) · **sharpness 0.598 vs bar ≥ 0.80 FAIL** (scene-mean; driven by scen7 0.48 vs
