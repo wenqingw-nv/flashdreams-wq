@@ -41,13 +41,17 @@ self-copying caveat from the issue-#1 verification IS the live artifact — mixe
 *period* shortcut, not the *loop prior*; every training pair still revisits its own content.
 
 Queued fixes (owner 2026-07-24):
-1. **RUNNING — inference-time low-pass correction** (no retrain): at solver steps,
-   `v_rect = v_base + α*(t)·gain·GaussianBlur_σ(v_corr − v_base)` (blur the correction delta only,
-   latent-spatial, σ ∈ {1, 2}; `LP_SIGMA` in `eval_rollouts.py`). Corrector = v2-v3 val-peak at
-   corrgate050 (final ckpt if budget allows), scenes {0, 6, 7} + healthy scen5 vs base. Kill bars
-   (pre-stated): sharpness ≥ 0.757 (v2's level; ideally ≈ base 0.869) · Δ-drift cut within ~10% of
-   un-low-passed v3 · explicit: trees stop disappearing (scen6)? leaf pulse gone (scen7)? Low-pass
-   CANNOT fix the repeated-street-view artifact — recorded but not counted against these bars.
+1. **KILLED (2026-07-24, both bars failed at both σ)** — inference-time low-pass correction
+   (`LP_SIGMA` in `eval_rollouts.py`, v2-v3 val-peak @ corrgate050, scenes 0/5/6/7, 2x-forward
+   test dial): sharpness 0.597 (σ1) / 0.643 (σ2) vs bar ≥ 0.757 (base 0.869) · Δ-drift cut
+   retained 44% (σ1) / 71% (σ2) vs bar ≥ ~90% (Δ 1.50/0.92 vs noLP 0.29, base 2.44). Explicit
+   checks: scen6 trees persist slightly better under σ2 (scen6 sharp 0.76 ≈ base) but stay
+   stylized; scen7 leaf disappearance persists (both corrected arms bare by f400, base leafy);
+   repeated-street-view persists (expected, not counted). Reading: the corrective signal and the
+   blur/semantic-slide damage are NOT frequency-separable in the delta — blurring removes drift
+   correction faster than it restores sharpness. Artifacts: `outputs/eval_lp{1,2}_v3p/` (scores,
+   sbs, `eval_lp2_v3p/lp_recheck/` frame stacks). Sweep-side monotonicity note: σ2 beat σ1 on BOTH
+   axes (single-seed noise or gate interaction — do not extrapolate to σ>2 without a fresh bar).
 2. **HOLD for owner GO — pairs-v4, non-looping conditioning**: stitch distinct HDMap segments per
    training rollout (no lap tiling; content never recurs). Available: 32 single-view HF clips x ~80 s
    authentic HDMap (~2400 frames) — a single clip already covers a full 645-frame rollout untiled, and
