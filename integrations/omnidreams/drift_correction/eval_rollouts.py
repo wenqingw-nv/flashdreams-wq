@@ -76,6 +76,49 @@ ALPHA_STAR = {
 gate; override as ``ALPHA_STAR=t:a,t:a``); nearest-t lookup, matching the
 HY deploy convention."""
 
+LP_SIGMA = float(os.environ.get("LP_SIGMA", "0"))
+"""When > 0: low-pass correction test (owner arm 2026-07-24, targets the
+class-a blur without a retrain). At each denoising step the gate configs
+run TWO forwards and blur only the correction delta in latent-space::
+
+    v_rect = v_base + alpha*(t) * gain * GaussianBlur_sigma(v_corr - v_base)
+
+Applied only at solver timesteps (nearest ALPHA_STAR key within 1); the
+``finalize_kv_cache`` context forward (t=128) keeps the plain single-pass
+LoRA scaling. 2x inference cost — test dial only."""
+
+CONFIGS = [c for c in os.environ.get("CONFIGS", "").split(",") if c]
+"""Optional subset of the dial grid (e.g. ``CONFIGS=corrgate050``)."""
+
+LAT_H, LAT_W = DEFAULT_VIDEO_HEIGHT // 16, DEFAULT_VIDEO_WIDTH // 16
+"""Patch-token grid (VAE /8 x patchify /2): 44 x 80 at 704x1280."""
+
+
+def lowpass_tokens(x: torch.Tensor, sigma: float) -> torch.Tensor:
+    """Separable gaussian blur over the token grid's spatial dims.
+
+    ``x`` is patchified ``[..., T*LAT_H*LAT_W, C]``; frames are blurred
+    independently (no temporal mixing).
+    """
+    import math
+
+    import torch.nn.functional as F
+
+    r = max(1, int(math.ceil(3 * sigma)))
+    k = torch.arange(-r, r + 1, device=x.device, dtype=torch.float32)
+    k = torch.exp(-0.5 * (k / sigma) ** 2)
+    k = (k / k.sum()).to(x.dtype)
+    orig = x.shape
+    n_frames = orig[-2] // (LAT_H * LAT_W)
+    assert n_frames * LAT_H * LAT_W == orig[-2], orig
+    y = x.reshape(-1, n_frames, LAT_H, LAT_W, orig[-1])
+    y = y.permute(0, 1, 4, 2, 3).reshape(-1, 1, LAT_H, LAT_W)
+    y = F.pad(y, (r, r, r, r), mode="reflect")
+    y = F.conv2d(y, k.view(1, 1, -1, 1))
+    y = F.conv2d(y, k.view(1, 1, 1, -1))
+    y = y.reshape(-1, n_frames, orig[-1], LAT_H, LAT_W).permute(0, 1, 3, 4, 2)
+    return y.reshape(orig)
+
 
 def install_alpha_gate(transformer, network, mode: dict) -> None:
     """Wrap ``predict_flow`` so gate configs rescale the LoRA every step."""
@@ -87,7 +130,17 @@ def install_alpha_gate(transformer, network, mode: dict) -> None:
             # finalize_kv_cache calls positionally: (noisy_latent, timestep, ...)
             ts = kwargs.get("timestep", args[1] if len(args) > 1 else None)
             t = float(ts.reshape(-1).max())
-            alpha = min(ALPHA_STAR.items(), key=lambda kv: abs(kv[0] - t))[1]
+            t_near, alpha = min(ALPHA_STAR.items(), key=lambda kv: abs(kv[0] - t))
+            if LP_SIGMA > 0 and abs(t - t_near) < 1:
+                # Low-pass test at solver steps: blur the delta only. The
+                # denoise-step forward is cache-idempotent (chunk KV commits
+                # only at finalize), so the double forward is safe.
+                set_lora_scale(network, 0.0)
+                v_base = orig_pf(*args, **kwargs)
+                set_lora_scale(network, 1.0)
+                v_corr = orig_pf(*args, **kwargs)
+                delta = lowpass_tokens(v_corr - v_base, LP_SIGMA)
+                return v_base + alpha * gain[1] * delta
             set_lora_scale(network, alpha * gain[1])
         return orig_pf(*args, **kwargs)
 
@@ -140,6 +193,8 @@ def main() -> None:
         "corrgate050": ("gate", 0.5),
         "corr": 1.0,
     }
+    if CONFIGS:
+        configs = {k: v for k, v in configs.items() if k in CONFIGS}
 
     # Cache per-scenario embeddings once (encoders stay loaded).
     embeddings = {}

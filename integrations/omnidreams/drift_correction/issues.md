@@ -32,10 +32,33 @@ At the deploy dial corrgate050 (α*(t)×0.5), scene-mean:
 
 v3 keeps ~90% of the Δ-drift cut and eliminates both scen6 conditioning-fidelity artifacts, but gives
 back quality/motion/sharpness vs v2@1000. Within v3, val-peak@300 ≥ final on MUSIQ/dyn/seam (sharp worse).
-Deploy recommendation: **PROVISIONAL, owner eyeball decides** — (a) ship v2@1000 @ gate×0.5 accepting the
-repeat-prior artifacts, or (b) ship v3-valpeak @ gate×0.5 accepting softer late-horizon detail, or (c) a
-blur-targeted round on the pairs-v3 recipe. Checkpoints: `outputs/lora_v1_v3.pt`,
-`outputs/lora_v2_v3{,_valpeak,_stepN}.pt`; sbs (sides in filename) under `outputs/eval_sweep_v3{,p}/`.
+
+**OWNER EYEBALL VERDICT on eval_sweep_v3 (2026-07-24): corrgate050 = best of our arms but FAILS
+overall** — scen0 blurry trees + repeated road scenes (same street view along the drive); scen6 blurry
+trees, trees gradually disappear entirely, roadside morphed, same-street-view repetition; scen7 leaves
+disappear and grow back (pulse). Owner eyeball outranks the instruments. Reading: the generic
+self-copying caveat from the issue-#1 verification IS the live artifact — mixed lap lengths removed the
+*period* shortcut, not the *loop prior*; every training pair still revisits its own content.
+
+Queued fixes (owner 2026-07-24):
+1. **RUNNING — inference-time low-pass correction** (no retrain): at solver steps,
+   `v_rect = v_base + α*(t)·gain·GaussianBlur_σ(v_corr − v_base)` (blur the correction delta only,
+   latent-spatial, σ ∈ {1, 2}; `LP_SIGMA` in `eval_rollouts.py`). Corrector = v2-v3 val-peak at
+   corrgate050 (final ckpt if budget allows), scenes {0, 6, 7} + healthy scen5 vs base. Kill bars
+   (pre-stated): sharpness ≥ 0.757 (v2's level; ideally ≈ base 0.869) · Δ-drift cut within ~10% of
+   un-low-passed v3 · explicit: trees stop disappearing (scen6)? leaf pulse gone (scen7)? Low-pass
+   CANNOT fix the repeated-street-view artifact — recorded but not counted against these bars.
+2. **HOLD for owner GO — pairs-v4, non-looping conditioning**: stitch distinct HDMap segments per
+   training rollout (no lap tiling; content never recurs). Available: 32 single-view HF clips x ~80 s
+   authentic HDMap (~2400 frames) — a single clip already covers a full 645-frame rollout untiled, and
+   segments can be drawn across clips without replacement. Open design point: without revisits there is
+   no lap-aligned clean counterpart — candidate replacement is segment-fresh short rollouts (low drift by
+   construction) replayed at the long rollout's absolute indices via the existing forged-index machinery;
+   seed inheritance at segment boundaries is the known risk to gate first. Estimated cost: pairs ~1.5-2 h
+   (2x rollouts) · v1+v2 retrain ~5-6 h · sweep+scoring ~1.5 h => ~9-10 h end-to-end.
+
+Checkpoints: `outputs/lora_v1_v3.pt`, `outputs/lora_v2_v3{,_valpeak,_stepN}.pt`; sbs (sides in
+filename) under `outputs/eval_sweep_v3{,p}/`.
 
 Verification notes (issue #1, 2026-07-23): scen6 = HF sample `239a869e-20a7-11ef-9e61-00044bf65d5c`
 (never seen by training). Eval rollouts use NON-tiled real HDMaps, so the 40-frame recurrence cannot
