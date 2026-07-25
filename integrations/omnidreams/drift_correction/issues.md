@@ -21,6 +21,11 @@ git history, not on this board.
 
 ## Standing findings
 
+- **Inference overhead (benchmarked 2026-07-25, GB300, `bench_latency.py` -> `outputs/bench_latency.json`)**:
+  base 233.0±1.5 ms/chunk (18.9 s e2e, 34.1 fps) vs shipped corrgate025 338.5±5.9 ms (27.5 s, 23.4 fps)
+  = +45% wall clock from the unfused fp32 LoRA delta path (per-step alpha*(t) gate prevents weight
+  merge); no extra forward passes; +7.34M params (0.36%); peak VRAM unchanged (31.53 GB).
+  Optimization headroom: bf16 delta path / compiled gate.
 - **Gain-prediction analysis** (gain*(t) = α*(t) × ρ(t); `gain_predict.py` + `TBIN_EVAL` in the
   trainers): verdict **MIXED** — HOLDS on HY (ranked all arms exactly as the owner verdicts), FAILS on
   the OD eyeball ordering; prospective v4 test = top-1 HIT / near-tie MISS (prediction recorded

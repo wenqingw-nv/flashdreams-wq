@@ -28,3 +28,9 @@ base > corrgate050 > corrgate > corr full). Consistent with the instruments (bas
 static scenes don't drift on this host). **Ship rule: corrector OFF for static jobs — by design,
 not a failure to fix**; scene-5 motion collapse is moot under this rule. Verified table in git
 history of `TODO.md`; sbs under `demo_static/`.
+
+Inference overhead (benchmarked 2026-07-25, GB300, `bench_latency.py` -> `outputs/bench_latency.json`):
+base 1307±45 ms/chunk (29.8 s e2e, 12.8 fps) vs shipped corrgate050 1461±69 ms (33.4 s, 11.4 fps) =
++12% wall clock from the unfused fp32 LoRA delta path (per-step alpha*(t) gate prevents weight merge);
+no extra forward passes; +14.7M params (0.28%); peak VRAM unchanged (47.49 GB); static/OFF jobs zero
+overhead. Recorded on PR #396.
