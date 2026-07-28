@@ -39,5 +39,5 @@ PR #396 — PR body update pending); pre-merge with a per-step GPU timestep read
 +31.6 ms — the readback sync was the residual, hence the CPU-side gate. Equivalence
 (`outputs/premerge_equiv/`): premerged-vs-unfused chunk-0 latent diff ~1.2% rel (bf16 merge
 rounding) with AR trajectory divergence growing over the horizon, visual quality equivalent (sbs +
-videos saved for owner eyeball). Static/OFF jobs zero overhead; `DRIFT_CORRECTOR_UNFUSED=1` restores
-the unfused path.
+videos saved for owner eyeball); instrument parity on the seeded pair: MUSIQ 70.2 vs 70.5, Δ-drift
+0.89 vs 0.73. Static/OFF jobs zero overhead; `DRIFT_CORRECTOR_UNFUSED=1` restores the unfused path.

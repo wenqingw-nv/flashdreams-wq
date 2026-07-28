@@ -30,9 +30,11 @@ git history, not on this board.
   (+45%, 2026-07-25); pre-merge with a per-step GPU timestep readback still cost +8.5 ms — the
   readback sync was the residual, hence the CPU-side gate. Equivalence (`outputs/premerge_equiv/`):
   CPU-gate vs timestep-gate latents bit-identical over 81 chunks; premerged-vs-unfused chunk-0 latent
-  diff ~0.8% rel (bf16 merge rounding) with AR trajectory divergence growing over the horizon, visual
-  quality equivalent (sbs + videos saved for owner eyeball). `DRIFT_CORRECTOR_UNFUSED=1` restores the
-  unfused path.
+  diff ~0.8% rel (bf16 merge rounding; the merge preserves 96.5-97.5% of the delta norm) with AR
+  trajectory divergence growing over the horizon, visual quality equivalent (sbs + videos saved for
+  owner eyeball). Instrument parity on 3 matched seeds (81 chunks, `multiseed/scores.json`): Δ-drift
+  premerged 2.49±0.46 vs unfused 2.83±0.38, MUSIQ 58.6±0.5 vs 58.4±0.4 — no correction or quality
+  loss beyond seed noise. `DRIFT_CORRECTOR_UNFUSED=1` restores the unfused path.
 - **Gain-prediction analysis** (gain*(t) = α*(t) × ρ(t); `gain_predict.py` + `TBIN_EVAL` in the
   trainers): verdict **MIXED** — HOLDS on HY (ranked all arms exactly as the owner verdicts), FAILS on
   the OD eyeball ordering; prospective v4 test = top-1 HIT / near-tie MISS (prediction recorded
