@@ -21,11 +21,18 @@ git history, not on this board.
 
 ## Standing findings
 
-- **Inference overhead (benchmarked 2026-07-25, GB300, `bench_latency.py` -> `outputs/bench_latency.json`)**:
-  base 233.0±1.5 ms/chunk (18.9 s e2e, 34.1 fps) vs shipped corrgate025 338.5±5.9 ms (27.5 s, 23.4 fps)
-  = +45% wall clock from the unfused fp32 LoRA delta path (per-step alpha*(t) gate prevents weight
-  merge); no extra forward passes; +7.34M params (0.36%); peak VRAM unchanged (31.53 GB).
-  Optimization headroom: bf16 delta path / compiled gate.
+- **Inference overhead: ~0 ms/chunk after per-step pre-merge (re-benchmarked 2026-07-28, GB300,
+  `bench_latency_premerged.py` -> `outputs/bench_latency_premerged.json`)**: the deploy hook now
+  pre-merges `alpha*(t) x gain` into one cached weight set per distinct gate value at load (2 sets,
+  +1.8 GiB, peak VRAM 31.4 -> 32.3 GB) and drives the swap CPU-side from the solver schedule, so the
+  corrected forward issues the same kernels as base. Measured: base 231.2±5.0 ms/chunk vs corrgate025
+  227.9±1.4 ms = -3.4 ms (zero within noise). History: the unfused fp32 delta path was +105 ms/chunk
+  (+45%, 2026-07-25); pre-merge with a per-step GPU timestep readback still cost +8.5 ms — the
+  readback sync was the residual, hence the CPU-side gate. Equivalence (`outputs/premerge_equiv/`):
+  CPU-gate vs timestep-gate latents bit-identical over 81 chunks; premerged-vs-unfused chunk-0 latent
+  diff ~0.8% rel (bf16 merge rounding) with AR trajectory divergence growing over the horizon, visual
+  quality equivalent (sbs + videos saved for owner eyeball). `DRIFT_CORRECTOR_UNFUSED=1` restores the
+  unfused path.
 - **Gain-prediction analysis** (gain*(t) = α*(t) × ρ(t); `gain_predict.py` + `TBIN_EVAL` in the
   trainers): verdict **MIXED** — HOLDS on HY (ranked all arms exactly as the owner verdicts), FAILS on
   the OD eyeball ordering; prospective v4 test = top-1 HIT / near-tie MISS (prediction recorded

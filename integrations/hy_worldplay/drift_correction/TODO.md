@@ -26,8 +26,10 @@ Runner flag: `HyWorldPlayWanI2VRunnerConfig.drift_corrector` (LoRA checkpoint pa
 `drift_corrector_gain` (default 0.5); selection logic in `hy_worldplay/_drift_corrector.py`
 (job-level, keyed on the pose's action labels). Verified end-to-end on GPU: motion pose logs
 "corrected (alpha*(t) x gain)", static pose logs "base (static trajectory)"
-(`outputs/flag_verify/`). Note: motion jobs keep the LoRA unfused (~0.3% params of matmul) because
-a single-scale weight merge cannot express the per-timestep gate; static jobs have zero overhead.
+(`outputs/flag_verify/`). Note: motion jobs deploy per-step **pre-merged** weight sets (one merged
+copy per distinct `alpha*(t) x gain`, swapped CPU-side from the solver schedule; +2.8 ms/chunk,
++8.1 GiB — see issues.md); `DRIFT_CORRECTOR_UNFUSED=1` restores the unfused delta path; static jobs
+have zero overhead.
 
 ## Open (post-ship, low priority)
 

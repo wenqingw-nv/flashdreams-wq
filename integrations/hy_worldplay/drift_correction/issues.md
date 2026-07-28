@@ -29,8 +29,15 @@ static scenes don't drift on this host). **Ship rule: corrector OFF for static j
 not a failure to fix**; scene-5 motion collapse is moot under this rule. Verified table in git
 history of `TODO.md`; sbs under `demo_static/`.
 
-Inference overhead (benchmarked 2026-07-25, GB300, `bench_latency.py` -> `outputs/bench_latency.json`):
-base 1307±45 ms/chunk (29.8 s e2e, 12.8 fps) vs shipped corrgate050 1461±69 ms (33.4 s, 11.4 fps) =
-+12% wall clock from the unfused fp32 LoRA delta path (per-step alpha*(t) gate prevents weight merge);
-no extra forward passes; +14.7M params (0.28%); peak VRAM unchanged (47.49 GB); static/OFF jobs zero
-overhead. Recorded on PR #396.
+Inference overhead: +2.8 ms/chunk (+0.22%) after per-step pre-merge (re-benchmarked 2026-07-28,
+GB300, `bench_latency_premerged.py` -> `outputs/bench_latency_premerged.json`): the deploy hook
+pre-merges `alpha*(t) x gain` into one cached weight set per distinct gate value at load (3 sets,
++8.1 GiB, peak VRAM 47.4 -> 52.7 GB) and drives the swap CPU-side from the solver schedule — the
+corrected forward issues the same kernels as base. Measured: base 1266±35 ms/chunk vs corrgate050
+1268.8±1.6 ms. History: the unfused fp32 delta path was +154 ms/chunk (+12%, 2026-07-25, recorded on
+PR #396 — PR body update pending); pre-merge with a per-step GPU timestep readback still cost
++31.6 ms — the readback sync was the residual, hence the CPU-side gate. Equivalence
+(`outputs/premerge_equiv/`): premerged-vs-unfused chunk-0 latent diff ~1.2% rel (bf16 merge
+rounding) with AR trajectory divergence growing over the horizon, visual quality equivalent (sbs +
+videos saved for owner eyeball). Static/OFF jobs zero overhead; `DRIFT_CORRECTOR_UNFUSED=1` restores
+the unfused path.

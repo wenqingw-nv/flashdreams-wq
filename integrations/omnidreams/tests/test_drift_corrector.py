@@ -15,13 +15,16 @@
 
 """CPU-only unit tests for the Clean Forcing drift-corrector deploy hook.
 
-Covers the two behaviours a deployment depends on:
+Covers the behaviours a deployment depends on:
 
 * ``_LoRALinear`` is a strict identity at ``scale == 0`` and at the
   zero-initialized ``B`` (so wrapping the network never changes base
   outputs until a trained checkpoint is loaded and gated on).
-* ``is_static_trajectory`` keys the content-based selection: all-idle
-  pose strings bypass the corrector, any commanded motion enables it.
+* ``_apply_lora`` wraps exactly the self-attention projections the
+  training-side module wraps (same match rule -> same checkpoint order),
+  and ``_set_scale`` reaches every wrapped linear.
+* The ``alpha*(t)`` gate profile resolves by nearest-t lookup, including
+  the context-noise forward.
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ import copy
 import pytest
 import torch
 import torch.nn as nn
-from hy_worldplay._drift_corrector import (
+from omnidreams._drift_corrector import (
     _LORA_RANK,
     GATE_ALPHA,
     _apply_lora,
@@ -40,7 +43,6 @@ from hy_worldplay._drift_corrector import (
     _premerge_weight_sets,
     _set_scale,
     _target_linears,
-    is_static_trajectory,
 )
 
 pytestmark = pytest.mark.ci_cpu
@@ -84,51 +86,39 @@ def test_apply_lora_wraps_only_attention_targets_and_set_scale_reaches_all():
         def __init__(self):
             super().__init__()
             self.self_attn = nn.ModuleDict(
-                {n: nn.Linear(4, 4, bias=False) for n in ("q", "k", "v", "o")}
+                {
+                    n: nn.Linear(4, 4, bias=False)
+                    for n in ("q_proj", "k_proj", "v_proj", "output_proj")
+                }
             )
-            self.ffn = nn.Linear(4, 4, bias=False)
+            self.mlp = nn.Linear(4, 4, bias=False)
 
     toy = Toy()
     params = _apply_lora(toy)
     wrapped = [m for m in toy.modules() if isinstance(m, _LoRALinear)]
-    assert len(wrapped) == 4  # q/k/v/o but not ffn
+    assert len(wrapped) == 4  # q/k/v/output projections but not the mlp
     assert len(params) == 8  # A + B per wrapped linear
-    assert not isinstance(toy.ffn, _LoRALinear)
+    assert not isinstance(toy.mlp, _LoRALinear)
     _set_scale(toy, 0.25)
     assert all(m.scale == 0.25 for m in wrapped)
 
 
-def test_static_pose_json_bypasses_the_corrector(tmp_path):
-    # The upstream grammar has no explicit "stay" token; a locked-off
-    # camera is an all-identity trajectory JSON (see demo_static.py).
-    import json
-
-    import numpy as np
-
-    eye = np.eye(4).tolist()
-    intrinsic = [
-        [1000.0, 0.0, 960.0],
-        [0.0, 1000.0, 540.0],
-        [0.0, 0.0, 1.0],
-    ]
-    n_latents = 16
-    poses = {str(i): {"extrinsic": eye, "K": intrinsic} for i in range(n_latents + 1)}
-    pose_json = tmp_path / "static_pose.json"
-    pose_json.write_text(json.dumps(poses))
-    assert is_static_trajectory(pose_json, n_latents=n_latents) is True
-
-
-def test_commanded_motion_pose_enables_the_corrector():
-    assert is_static_trajectory("w-8, s-8", n_latents=16) is False
-
-
 def test_gate_profile_nearest_t_lookup():
-    # The distilled 4-step schedule resolves to its own gate entries in
-    # order; the finalize context forward (t=0, no network pass on this
-    # host) resolves to the low-t entry.
-    schedule = (1000.0, 960.0, 888.8889, 727.2728)
-    assert [_nearest_alpha(t) for t in schedule] == [GATE_ALPHA[t] for t in schedule]
-    assert _nearest_alpha(0.0) == GATE_ALPHA[727.2728]
+    assert _nearest_alpha(1000.0) == GATE_ALPHA[1000.0]
+    assert _nearest_alpha(803.0) == GATE_ALPHA[803.0]
+    # The context-noise forward (t=128) resolves to the low-t entry,
+    # matching the evaluated deploy configs.
+    assert _nearest_alpha(128.0) == GATE_ALPHA[803.0]
+    # The deployed 2-step solver schedule (warped [1000, 350] -> ~[1000,
+    # 803]) resolves to the two gate entries in order.
+    assert [_nearest_alpha(t) for t in (1000.0, 802.9)] == [
+        GATE_ALPHA[1000.0],
+        GATE_ALPHA[803.0],
+    ]
+
+
+def test_gate_profile_is_a_strict_attenuation():
+    assert all(0.0 < a <= 1.0 for a in GATE_ALPHA.values())
 
 
 ## Pre-merged weight path
@@ -139,9 +129,12 @@ def _toy_network() -> nn.Module:
         def __init__(self):
             super().__init__()
             self.self_attn = nn.ModuleDict(
-                {n: nn.Linear(4, 4, bias=False) for n in ("q", "k", "v", "o")}
+                {
+                    n: nn.Linear(4, 4, bias=False)
+                    for n in ("q_proj", "k_proj", "v_proj", "output_proj")
+                }
             )
-            self.ffn = nn.Linear(4, 4, bias=False)
+            self.mlp = nn.Linear(4, 4, bias=False)
 
     return nn.Sequential(Block(), Block())
 
@@ -171,7 +164,7 @@ def test_premerged_weights_match_the_unfused_delta():
     net = _toy_network()
     linears = _target_linears(net)
     sd = _random_checkpoint(linears)
-    gain = 0.5
+    gain = 0.25
     sets, added_bytes = _premerge_weight_sets(linears, sd, gain)
     assert set(sets) == set(GATE_ALPHA.values())
     x = torch.randn(3, 4)

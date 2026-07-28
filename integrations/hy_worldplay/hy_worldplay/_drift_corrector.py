@@ -13,10 +13,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Content-keyed Clean Forcing drift corrector for the HY-WorldPlay runner."""
+"""Content-keyed Clean Forcing drift corrector for the HY-WorldPlay runner.
+
+By default the LoRA is **pre-merged**: at load time each discrete
+``alpha*(t) * gain`` value gets its own cached copy of the target
+projection weights with the scaled delta folded in, and the per-step gate
+just swaps the cached set in — zero extra work in the hot path. The gate
+is driven CPU-side from the load-time solver schedule (one
+``predict_flow`` call per solver step), so the corrected forward issues
+the same kernels as base with no GPU timestep readback. Set
+``DRIFT_CORRECTOR_UNFUSED=1`` to fall back to the runtime A/B-matmul path
+(the pre-2026-07-25 behavior).
+"""
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -95,6 +107,49 @@ def _set_scale(network: nn.Module, scale: float) -> None:
             m.scale = scale
 
 
+def _nearest_alpha(t: float) -> float:
+    """Return the :data:`GATE_ALPHA` entry with the nearest timestep."""
+    return min(GATE_ALPHA.items(), key=lambda kv: abs(kv[0] - t))[1]
+
+
+def _target_linears(network: nn.Module) -> list[nn.Linear]:
+    """Target linears in checkpoint load order (same walk as ``_apply_lora``)."""
+    linears: list[nn.Linear] = []
+    for mname, module in network.named_modules():
+        for cname, child in module.named_children():
+            full = f"{mname}.{cname}" if mname else cname
+            if isinstance(child, nn.Linear) and any(t in full for t in _LORA_TARGETS):
+                linears.append(child)
+    return linears
+
+
+def _premerge_weight_sets(
+    linears: list[nn.Linear], sd: dict, gain: float
+) -> tuple[dict[float, list[Tensor]], int]:
+    """Cache ``W + gain*alpha*(B @ A)`` per distinct gate value.
+
+    ``sd`` holds the checkpoint tensors in load order (``A_i`` at ``2i``,
+    ``B_i`` at ``2i + 1``). The merge runs in fp32 (matching the unfused
+    path's fp32 delta) and is cast back to the base weight dtype.
+
+    Returns:
+        The per-alpha weight sets and the total cached bytes.
+    """
+    sets: dict[float, list[Tensor]] = {}
+    added_bytes = 0
+    for alpha in sorted(set(GATE_ALPHA.values())):
+        merged: list[Tensor] = []
+        for i, lin in enumerate(linears):
+            a = sd[2 * i].to(lin.weight.device, torch.float32)
+            b = sd[2 * i + 1].to(lin.weight.device, torch.float32)
+            w32 = lin.weight.detach().to(torch.float32, copy=True)
+            w = w32.addmm_(b, a, alpha=gain * alpha).to(lin.weight.dtype)
+            merged.append(w)
+            added_bytes += w.numel() * w.element_size()
+        sets[alpha] = merged
+    return sets, added_bytes
+
+
 def is_static_trajectory(pose: str | Path, n_latents: int) -> bool:
     """Whether the job's trajectory is a locked-off camera.
 
@@ -112,7 +167,9 @@ def is_static_trajectory(pose: str | Path, n_latents: int) -> bool:
     return bool((labels == STATIC_ACTION_CLASS).all())
 
 
-def maybe_apply_drift_corrector(runner: Any, checkpoint: Path, gain: float) -> str:
+def maybe_apply_drift_corrector(
+    runner: Any, checkpoint: Path, gain: float, *, unfused: bool | None = None
+) -> str:
     """Deploy the corrector on ``runner`` keyed on the job's trajectory content.
 
     Ship rule (owner decision 2026-07-21): static scenes measure negative
@@ -125,11 +182,16 @@ def maybe_apply_drift_corrector(runner: Any, checkpoint: Path, gain: float) -> s
         runner: A built ``HyWorldPlayWanI2VRunner``.
         checkpoint: Corrector LoRA checkpoint (``save_lora`` format).
         gain: Global gain multiplied into the alpha*(t) profile.
+        unfused: Force the runtime A/B-matmul path instead of the default
+            per-step pre-merged weights. ``None`` reads the
+            ``DRIFT_CORRECTOR_UNFUSED`` environment variable.
 
     Returns:
-        ``"base (static trajectory)"`` or ``"corrected (alpha*(t) x gain)"``,
-        for the runner's log line.
+        ``"base (static trajectory)"`` or a ``"corrected (alpha*(t) x
+        gain, ...)"`` description, for the runner's log line.
     """
+    if unfused is None:
+        unfused = os.environ.get("DRIFT_CORRECTOR_UNFUSED", "0") == "1"
     cfg = runner.config
     if is_static_trajectory(cfg.pose, cfg.num_chunk * 4):
         return "base (static trajectory)"
@@ -137,27 +199,82 @@ def maybe_apply_drift_corrector(runner: Any, checkpoint: Path, gain: float) -> s
     network = runner.pipeline.diffusion_model.transformer.network
     if hasattr(network, "_orig_mod"):  # unwrap torch.compile
         network = network._orig_mod
-    params = _apply_lora(network)
-
-    sd = torch.load(checkpoint, map_location="cpu", weights_only=False)["lora"]
-    assert len(sd) == len(params), (
-        f"corrector checkpoint has {len(sd)} LoRA tensors but the network "
-        f"exposes {len(params)}; rank or target mismatch."
-    )
-    for i, p in enumerate(params):
-        p.data.copy_(sd[i].to(p.device, p.dtype))
-
-    # Per-step gate: rescale the LoRA to alpha*(t) x gain before every
-    # denoise step (nearest-t lookup; per-token AR0 timesteps include the
-    # first-frame stabilization value, the max is always the scheduler step).
     transformer = runner.pipeline.diffusion_model.transformer
-    orig_pf = transformer.predict_flow
+    sd = torch.load(checkpoint, map_location="cpu", weights_only=False)["lora"]
 
-    def gated_pf(*args, **kwargs):
-        t = float(kwargs["timestep"].reshape(-1).max())
-        alpha = min(GATE_ALPHA.items(), key=lambda kv: abs(kv[0] - t))[1]
-        _set_scale(network, alpha * gain)
-        return orig_pf(*args, **kwargs)
+    if unfused:
+        params = _apply_lora(network)
+        assert len(sd) == len(params), (
+            f"corrector checkpoint has {len(sd)} LoRA tensors but the network "
+            f"exposes {len(params)}; rank or target mismatch."
+        )
+        for i, p in enumerate(params):
+            p.data.copy_(sd[i].to(p.device, p.dtype))
+        orig_pf = transformer.predict_flow
 
-    transformer.predict_flow = gated_pf
-    return "corrected (alpha*(t) x gain)"
+        # Per-step gate: rescale the LoRA to alpha*(t) x gain before every
+        # denoise step (nearest-t lookup; per-token AR0 timesteps include the
+        # first-frame stabilization value, the max is always the scheduler
+        # step).
+        def gated_pf(*args, **kwargs):
+            t = float(kwargs["timestep"].reshape(-1).max())
+            _set_scale(network, _nearest_alpha(t) * gain)
+            return orig_pf(*args, **kwargs)
+
+        transformer.predict_flow = gated_pf
+        return "corrected (alpha*(t) x gain, unfused)"
+
+    # Pre-merged path (default): one cached weight set per distinct
+    # alpha*(t) value; the per-step gate just re-points the projection
+    # weights at the cached set — no LoRA matmuls in the hot path.
+    linears = _target_linears(network)
+    assert len(sd) == 2 * len(linears), (
+        f"corrector checkpoint has {len(sd)} LoRA tensors but the network "
+        f"exposes {2 * len(linears)}; rank or target mismatch."
+    )
+    weight_sets, added_bytes = _premerge_weight_sets(linears, sd, gain)
+    current: list[float | None] = [None]
+
+    def _swap(alpha: float) -> None:
+        if alpha != current[0]:
+            for lin, w in zip(linears, weight_sets[alpha]):
+                lin.weight.data = w
+            current[0] = alpha
+
+    # Drive the gate CPU-side. The Euler scheduler makes exactly one
+    # ``predict_flow`` call per solver step in a Python loop, so each
+    # step's alpha resolves from the load-time schedule by call index —
+    # reading the timestep tensor back per step (the unfused path's
+    # ``float(timestep.max())``) would stall the CPU launch queue every
+    # solver step.
+    scheduler = runner.pipeline.diffusion_model.scheduler
+    n_steps = scheduler.config.num_inference_steps
+    step_alphas = [_nearest_alpha(t) for t in scheduler.timesteps.tolist()[:n_steps]]
+    ctx_alpha = _nearest_alpha(
+        float(runner.pipeline.diffusion_model.config.context_noise)
+    )
+    orig_sample = scheduler.sample
+
+    def gated_sample(initial_noise, predict_flow, rng=None):
+        calls = [0]
+
+        def pf(noisy, timestep):
+            assert calls[0] < len(step_alphas), "predict_flow calls > solver steps"
+            _swap(step_alphas[calls[0]])
+            calls[0] += 1
+            return predict_flow(noisy, timestep)
+
+        return orig_sample(initial_noise=initial_noise, predict_flow=pf, rng=rng)
+
+    scheduler.sample = gated_sample
+    orig_finalize = transformer.finalize_kv_cache
+
+    def gated_finalize(*args, **kwargs):
+        _swap(ctx_alpha)
+        return orig_finalize(*args, **kwargs)
+
+    transformer.finalize_kv_cache = gated_finalize
+    return (
+        f"corrected (alpha*(t) x gain, pre-merged {len(weight_sets)} weight "
+        f"sets, +{added_bytes / 2**20:.0f} MiB)"
+    )
