@@ -164,6 +164,15 @@ class LingbotWorldRunnerConfig(RunnerConfig):
     example_idx: int = 0
     """Example folder index under ``.../examples/``; allowed: ``0`` through ``5``."""
 
+    drift_corrector: Path | None = None
+    """Clean Forcing drift-corrector LoRA checkpoint. ``None`` disables
+    correction. When set, the corrector deploys at
+    ``alpha*(t) * drift_corrector_gain`` per denoise step via pre-merged
+    weight sets (see ``lingbot/_drift_corrector.py``)."""
+
+    drift_corrector_gain: float = 1.0
+    """Global gain composed with the per-step ``alpha*(t)`` gate profile."""
+
 
 class LingbotWorldRunner(
     Runner[LingbotWorldRunnerConfig, LingbotWorldInferencePipeline]
@@ -228,6 +237,13 @@ class LingbotWorldRunner(
             "LingbotWorldRunner requires --intrinsic_path "
             "(.npy of [T, 4] camera intrinsics)."
         )
+        if cfg.drift_corrector is not None:
+            from lingbot._drift_corrector import apply_drift_corrector
+
+            mode = apply_drift_corrector(
+                self, cfg.drift_corrector, cfg.drift_corrector_gain
+            )
+            logger.info(f"[{cfg.runner_name}] drift corrector: {mode}")
 
         prompt = self._resolve_prompt()
         device = torch.device(f"cuda:{self.local_rank}")
