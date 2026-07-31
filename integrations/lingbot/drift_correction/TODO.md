@@ -38,10 +38,16 @@ SPDX-License-Identifier: Apache-2.0
 2. **Adapter**: `_rollout.py` (build_runner, capture_rollout w/ per-chunk clean latents + poses),
    `_traj.py` (mixed-geometry loop trajectories from example scenes), `_lora.py` (HY mirror),
    probe = fresh-cache teacher-forced history rebuild + one denoise-step forward.
-3. **Step-0 gate** (`gate_faithful.py` port): loop pairs, lap-1 teacher, unbiased alpha*(t) at the
-   4 solver timesteps. KILL BARS: mean rel drift gap < 0.01 -> nothing to correct, STOP;
-   alpha* < 0.7 at the drift-dominant timesteps -> REPORT to owner before any training
-   (HY precedent: 0.81@t1000 / ~0.53-0.58 below, proceeded with gate as deploy knob).
+3. **Step-0 gate — RUN 2026-07-31 (`outputs/gate/gate_faithful.json`, 18 cells, 6 scenes x
+   laps 3-6): AT THE REPORT-FIRST BAR, awaiting owner GO/NO-GO.**
+   Unbiased alpha*(t): **0.878 @ t=999**, 0.582 @ 978, 0.574 @ 947, 0.637 @ 825; 36% of cells
+   >= 0.7. Mean rel drift gap **0.462** (46x the nothing-to-correct bar; grows monotonically
+   with lap depth in every clip — drift is real and large on this host). Profile is HY-shaped
+   but slightly stronger at every timestep (HY: 0.81 / 0.53-0.58, shipped at -48% drift with
+   the alpha*(t) gate as deploy knob). Caveats as on HY: alpha* is a lower bound (corrector
+   sees z_t), and the t=999 step dominates few-step hosts.
+   Original kill bars: mean rel < 0.01 -> STOP (not triggered); alpha* < 0.7 majority ->
+   REPORT first (triggered -> this entry).
 4. **Pairs + v1 training** (gate-conditional): mixed-geometry legs (HY repeat-prior lesson:
    never pure loops), zero real videos; LoRA r16 q/k/v/o; kill bar: val R^2 plateau < 0.15 ->
    stop and report. 200-step checkpoints, resumable, via safe_run.sh.
