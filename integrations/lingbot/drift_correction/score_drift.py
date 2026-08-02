@@ -54,11 +54,17 @@ cross-host-comparable scale (SF 0.17 / av1s 0.20 / av2s 0.50)."""
 
 
 def read_frames(path: Path, stride: int) -> np.ndarray:
-    """Decode every ``stride``-th frame of an MP4 to ``[N, H, W, 3]`` uint8."""
-    import imageio.v3 as iio
+    """Decode every ``stride``-th frame of an MP4 to ``[N, H, W, 3]`` uint8.
 
-    frames = iio.imread(path, plugin="pyav")
-    return frames[::stride]
+    Uses the ffmpeg reader; the pyav plugin intermittently dies with
+    ``BlockingIOError`` in frame reformat on this box.
+    """
+    import imageio.v2 as iio
+
+    rd = iio.get_reader(str(path))
+    frames = [f for i, f in enumerate(rd) if i % stride == 0]
+    rd.close()
+    return np.stack(frames)
 
 
 def musiq_curve(frames: np.ndarray, model, device) -> list[float]:

@@ -48,9 +48,15 @@ SPDX-License-Identifier: Apache-2.0
    sees z_t), and the t=999 step dominates few-step hosts.
    Original kill bars: mean rel < 0.01 -> STOP (not triggered); alpha* < 0.7 majority ->
    REPORT first (triggered -> this entry).
-4. **Pairs + v1 training** (gate-conditional): mixed-geometry legs (HY repeat-prior lesson:
-   never pure loops), zero real videos; LoRA r16 q/k/v/o; kill bar: val R^2 plateau < 0.15 ->
-   stop and report. 200-step checkpoints, resumable, via safe_run.sh.
+4. **Pairs + v1 training — DONE 2026-08-02** (owner GO on the gate 2026-07-31): 800 steps,
+   final val R^2 +0.419 (kill bar 0.15 cleared; plateau band 0.40-0.47 from ~step 200).
+   Checkpoint `outputs/lora_v1.pt`. **v1 closed-loop eval (18 held-out cells/config,
+   40 chunks, `outputs/eval_v1/scores.json`)**: Δ-drift base +8.27 -> corr(g1.0) +5.30
+   (-36%) / corrgate(x1.0) +4.63 (**-44%**, target >= 30%); MUSIQ 58.8 -> 61.8/62.6 (late
+   54.5 -> 57.2/59.1); latesim/lag2s up. **Guard breach: dynamics -31%** (65.6 -> ~45.5,
+   guard ~20%) — the known drift-progression trade at full gain (HY shipped 0.5, OD 0.25);
+   dial sweep at gains 0.5/0.7 (flat + gated) running. Watch items for eyeball: seam motion
+   ratio 1.37 @ corr g1.0 (base 1.00; corrgate 1.19), cuts 1.1 vs 0.6.
 5. **v2 (DAgger; contraction OFF by default — cross-host evidence: progression killer),
    dial sweep gain x alpha*(t)-gate, owner-eyeball sbs, deploy hook** (pre-merged weight sets +
    CPU-side schedule gate from day one, graph-compatible swap per the constraint above),

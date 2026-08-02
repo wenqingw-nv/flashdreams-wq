@@ -75,6 +75,11 @@ CONFIGS = tuple(
 GAINS = tuple(float(g) for g in os.environ.get("GAINS", "").split(",") if g.strip())
 """Extra flat-gain configs (``GAINS=0.5,0.7`` adds ``corr050``, ``corr070``)."""
 
+GATE_GAINS = tuple(
+    float(g) for g in os.environ.get("GATE_GAINS", "").split(",") if g.strip()
+)
+"""Extra ``alpha*(t) x gain`` configs (``GATE_GAINS=0.5`` adds ``corrgate050``)."""
+
 NUM_CHUNK = int(os.environ.get("NUM_CHUNK", "40"))
 """Rollout horizon in AR chunks (40 = 477 decoded frames; the training
 pairs stop at 29, so the tail is unseen drift depth)."""
@@ -185,6 +190,8 @@ def main() -> None:
     configs: dict[str, float | tuple[str, float]] = {c: grid[c] for c in CONFIGS}
     for g in GAINS:
         configs[f"corr{g:.2f}".replace(".", "")] = g
+    for g in GATE_GAINS:
+        configs[f"corrgate{g:.2f}".replace(".", "")] = ("gate", g)
 
     pipe = build_pipeline()
     # Pin the one-shot text/image encoders: ``initialize_cache``'s default
