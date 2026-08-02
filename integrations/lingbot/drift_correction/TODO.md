@@ -57,10 +57,16 @@ SPDX-License-Identifier: Apache-2.0
    guard ~20%) — the known drift-progression trade at full gain (HY shipped 0.5, OD 0.25);
    dial sweep at gains 0.5/0.7 (flat + gated) running. Watch items for eyeball: seam motion
    ratio 1.37 @ corr g1.0 (base 1.00; corrgate 1.19), cuts 1.1 vs 0.6.
-5. **v2 (DAgger; contraction OFF by default — cross-host evidence: progression killer),
-   dial sweep gain x alpha*(t)-gate, owner-eyeball sbs, deploy hook** (pre-merged weight sets +
-   CPU-side schedule gate from day one, graph-compatible swap per the constraint above),
-   ci_cpu tests, README refresh recipe.
+5. **Dial sweep — DONE 2026-08-02** (`outputs/eval_v1/scores.json`, 7 configs x 18 cells):
+   guard-compliant AND >= 30% Δ-cut: **corr050 (flat 0.5): Δ -44%, dyn -14%, best late MUSIQ
+   60.15, seam 1.07** · corrgate070: Δ -42%, dyn -17%. Full gain (either mode) breaches the
+   dynamics guard (-29..31%); corrgate050 undershoots drift (-26%). Flat 0.5 beating the gated
+   dials means deploy pre-merge = ONE weight set, zero runtime swaps (CUDA-graph constraint
+   moot for the recommended config). sbs eyeball material: `outputs/eval_v1/sbs/` (8 x
+   base-vs-corr050 + corr050-vs-corrgate070). **AWAITING OWNER EYEBALL + ship decision
+   (config / v2 round).** Deploy hook + tests already landed (`lingbot/_drift_corrector.py`);
+   remaining after verdict: set shipped defaults, deploy-hook GPU verify, README refresh
+   recipe, boards close-out.
 
 ## Open
 
