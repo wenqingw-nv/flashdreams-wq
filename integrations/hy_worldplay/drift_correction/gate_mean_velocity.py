@@ -27,6 +27,12 @@ per step. The summary prints the per-step t=1000 reference from
 ``gate_faithful.json`` (when present) next to the integrated alpha* for
 direct comparison.
 
+``WINDOW="start:end"`` (default ``"0:4"``, solver-step indices into
+``scheduler.timesteps``/``sigmas``) narrows the probe: ``z_t`` is built at
+``sigmas[start]``, the Euler roll covers steps ``[start, end)``, and
+``u_mean = (z_t - z_final) / (sigmas[start] - sigmas[end])``. Non-default
+windows write ``gate_mean_velocity_w{start}{end}.json`` instead.
+
 Run after ``build_pairs.py`` from the repo root::
 
     .venv/bin/python integrations/hy_worldplay/drift_correction/gate_mean_velocity.py
@@ -35,6 +41,7 @@ Run after ``build_pairs.py`` from the repo root::
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, cast
 
@@ -59,7 +66,13 @@ PAIRS_DIR = Path("integrations/hy_worldplay/drift_correction/outputs/pairs")
 OUT_PATH = Path(
     "integrations/hy_worldplay/drift_correction/outputs/gate/gate_mean_velocity.json"
 )
-"""Aggregated integrated-window result."""
+"""Aggregated integrated-window result (default window; other windows write
+``gate_mean_velocity_w{start}{end}.json`` alongside)."""
+
+WINDOW = os.environ.get("WINDOW", "0:4")
+"""Solver-step window ``"start:end"`` into ``scheduler.timesteps``/``sigmas``.
+``z_t`` is built at ``sigmas[start]`` and the Euler roll covers steps
+``[start, end)``; the default covers the full 1000->0 integration."""
 
 FAITHFUL_PATH = Path(
     "integrations/hy_worldplay/drift_correction/outputs/gate/gate_faithful.json"
@@ -82,6 +95,14 @@ PER_STEP_T1000_REF = 0.81
 reference)."""
 
 
+def _parse_window(spec: str) -> tuple[int, int]:
+    """Parse ``WINDOW`` into (start, end) solver-step indices; end exclusive."""
+    start_s, _, end_s = spec.partition(":")
+    start, end = int(start_s), int(end_s)
+    assert 0 <= start < end, f"bad WINDOW {spec!r}: need 0 <= start < end"
+    return start, end
+
+
 def integrate_u_mean(
     transformer: Any,
     tc: HyWorldPlayWan21TransformerCache,
@@ -91,28 +112,35 @@ def integrate_u_mean(
     timesteps: Tensor,
     sigmas: Tensor,
     dtype: torch.dtype,
+    start: int,
+    end: int,
 ) -> Tensor:
-    """Mean velocity of the full Euler integration from ``z_t`` down to x0.
+    """Mean velocity of the Euler integration over solver steps [start, end).
 
-    Runs every scheduler step under the cache's current history
-    (``sigmas[-1] == 0``, so ``z`` lands on the integrated ``x0_hat``). All
-    forwards stay inside the caller's probe bracket -- the bracket supports
-    repeated ``predict_flow`` calls at the same chunk.
+    Runs each window step under the cache's current history; when ``end`` is
+    the final solver step (``sigmas[end] == 0``), ``z`` lands on the
+    integrated ``x0_hat``. All forwards stay inside the caller's probe
+    bracket -- the bracket supports repeated ``predict_flow`` calls at the
+    same chunk.
 
     Returns:
-        fp32 ``u_mean = (z_t - x0_hat) / sigma_0``.
+        fp32 ``u_mean = (z_t - z_final) / (sigmas[start] - sigmas[end])``.
     """
     z = z_t
-    for i in range(len(timesteps) - 1):
+    for i in range(start, end):
         flow = transformer.predict_flow(
             noisy_latent=z, timestep=timesteps[i].to(dtype), cache=tc, input=ctrl
         )
         z = z + float(sigmas[i + 1] - sigmas[i]) * flow
-    return (z_t.float() - z.float()) / float(sigmas[0])
+    return (z_t.float() - z.float()) / float(sigmas[start] - sigmas[end])
 
 
 def main() -> None:
     torch.set_grad_enabled(False)
+    w_start, w_end = _parse_window(WINDOW)
+    out_path = OUT_PATH
+    if (w_start, w_end) != (0, 4):
+        out_path = OUT_PATH.with_name(f"gate_mean_velocity_w{w_start}{w_end}.json")
     clips = sorted(PAIRS_DIR.glob("clip_*.pt"))
     assert clips, f"no clips under {PAIRS_DIR}; run build_pairs.py first"
 
@@ -135,7 +163,11 @@ def main() -> None:
     scheduler = pipe.diffusion_model.scheduler
     timesteps = cast(Tensor, scheduler.timesteps)
     sigmas = cast(Tensor, scheduler.sigmas)
-    sigma_0 = sigmas[0].to(dtype)
+    assert w_end < len(sigmas), (
+        f"WINDOW {WINDOW!r} out of range for {len(sigmas)} sigmas"
+    )
+    sigma_start = sigmas[w_start].to(dtype)
+    t_hi, t_lo = int(timesteps[w_start]), int(timesteps[w_end])
 
     # Accumulate squared-bias / variance / norms for the single integrated
     # window across all (clip, chunk) cells.
@@ -158,9 +190,11 @@ def main() -> None:
 
             z_ts: list[Tensor] = []
             for m in range(M_NOISE):
-                g = torch.Generator(device=device).manual_seed(700_000 + 10_000 * k + m)
+                g = torch.Generator(device=device).manual_seed(
+                    700_000 + 10_000 * k + 1_000 * w_start + m
+                )
                 eps = torch.randn(x0.shape, device=device, dtype=dtype, generator=g)
-                z_ts.append((1 - sigma_0) * x0 + sigma_0 * eps)
+                z_ts.append((1 - sigma_start) * x0 + sigma_start * eps)
 
             preds: dict[str, list[Tensor]] = {}
             for name, h in (("gen", h_gen), ("clean", h_clean)):
@@ -174,6 +208,8 @@ def main() -> None:
                         timesteps=timesteps,
                         sigmas=sigmas,
                         dtype=dtype,
+                        start=w_start,
+                        end=w_end,
                     )
                     for z in z_ts
                 ]
@@ -195,7 +231,7 @@ def main() -> None:
             agg["alphas_ub"].append(a_ub)
             agg["rels"].append(rel)
             print(
-                f"{clip_path.stem} k={k:2d} | u_mean 1000->0"
+                f"{clip_path.stem} k={k:2d} | u_mean {t_hi}->{t_lo}"
                 f" a*={a:.3f}/{a_ub:.3f} rel={rel:.3f}",
                 flush=True,
             )
@@ -211,10 +247,12 @@ def main() -> None:
         "rel": mean_rel,
         "cells": n_cells,
     }
-    OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    OUT_PATH.write_text(json.dumps(summary, indent=2))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(summary, indent=2))
 
-    print("\n====== HY-WorldPlay MEAN-VELOCITY gate (integrated 1000->0) ======")
+    print(
+        f"\n====== HY-WorldPlay MEAN-VELOCITY gate (integrated {t_hi}->{t_lo}) ======"
+    )
     print(
         f"integrated: alpha* {alpha:.3f} (unbiased {alpha_ub:.3f})"
         f" | rel drift gap {mean_rel:.3f} | {n_cells} cells"
@@ -242,7 +280,7 @@ def main() -> None:
         )
     else:
         print("RESULT: below the per-step t=1000 reference -- report before training.")
-    print(f"saved {OUT_PATH}")
+    print(f"saved {out_path}")
     print("MEAN-GATE-DONE", flush=True)
 
 
