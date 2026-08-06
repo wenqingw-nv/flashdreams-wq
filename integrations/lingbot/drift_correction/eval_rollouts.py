@@ -84,6 +84,11 @@ NUM_CHUNK = int(os.environ.get("NUM_CHUNK", "40"))
 """Rollout horizon in AR chunks (40 = 477 decoded frames; the training
 pairs stop at 29, so the tail is unseen drift depth)."""
 
+GRAMMAR_REPEAT = int(os.environ.get("GRAMMAR_REPEAT", "1"))
+"""Tile each eval grammar's token string this many times (comma-joined)
+before pose generation, so the fixed EVAL_GRAMMARS cover arbitrary
+NUM_CHUNK horizons (one pass covers 40 chunks)."""
+
 SCENES = tuple(int(s) for s in os.environ.get("SCENES", "0,1,2,3,4,5").split(","))
 """Bundled example scenes to roll out."""
 
@@ -106,8 +111,9 @@ alternating 48-degree yaw turns, a forward strafe sweep (sustained diagonal
 drift, never doubling back), and a forward walk with a +-32-degree pitch
 sweep. All are open, progressing paths -- deliberately NOT the training
 out-and-back strafe loops (``e-N, q-N``), so any learned repeat prior shows
-up as a failure here instead of a win. Each grammar must cover
-``9 + (NUM_CHUNK - 1) * 12`` pose frames (477 at 40 chunks; asserted).
+up as a failure here instead of a win. Each grammar (after GRAMMAR_REPEAT
+tiling) must cover ``9 + (NUM_CHUNK - 1) * 12`` pose frames (477 at 40
+chunks; asserted).
 Trajectory names feed the ``{scene}_{traj}_{config}.mp4`` naming that
 ``score_drift.py`` parses, so they must not contain underscores."""
 
@@ -216,12 +222,14 @@ def main() -> None:
         key = (scene_idx, traj)
         if key not in camctrls_by_cell:
             poses_t, intr_t, ws = camera_stream(
-                scenes[scene_idx], grammar_poses(grammar)
+                scenes[scene_idx],
+                grammar_poses(", ".join([grammar] * GRAMMAR_REPEAT)),
             )
             camctrls = chunk_camctrl(poses_t, intr_t, ws, pipe, n_chunks=NUM_CHUNK)
             assert len(camctrls) == NUM_CHUNK, (
                 f"grammar {traj!r} covers only {len(camctrls)} of {NUM_CHUNK} "
-                f"chunks; extend it past {9 + (NUM_CHUNK - 1) * 12} frames"
+                f"chunks; extend it past {9 + (NUM_CHUNK - 1) * 12} frames "
+                f"or raise GRAMMAR_REPEAT (now {GRAMMAR_REPEAT})"
             )
             camctrls_by_cell[key] = camctrls
         return scenes[scene_idx], camctrls_by_cell[key]
