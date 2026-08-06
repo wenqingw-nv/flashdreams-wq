@@ -29,6 +29,11 @@ config as ``{scene}_{traj}_{config}.mp4`` under ``OUT``:
 - ``nfe1base``: the same 1-step scheduler, NO LoRA -- the ablation showing
   the raw 1-step quality drop the corrector must beat.
 
+``GAINS`` (comma-separated floats, default ``1.0``) sweeps the corrector's
+LoRA scale: each gain ``g`` yields a 1-step + LoRA config named
+``nfe1corr{g:.2f}`` with the dot dropped (``GAINS=0.4`` -> ``nfe1corr040``);
+``g == 1.0`` keeps the plain ``nfe1corr`` name so existing MP4s are reused.
+
 Two 14B pipelines do not fit VRAM together, so pipelines are built
 sequentially per config (destroyed and cache-emptied in between); finished
 MP4s are skipped on re-run, and a config whose MP4s all exist skips the
@@ -72,24 +77,37 @@ LORA = os.environ.get("LORA", str(_BASE / "outputs/lora_v1_mean_w04.pt"))
 """Mean-velocity corrector checkpoint (``train_v1_mean.py`` format: dict
 with index-keyed ``lora`` tensors, rank 16)."""
 
+GAINS = tuple(float(g) for g in os.environ.get("GAINS", "1.0").split(",") if g.strip())
+"""Corrector LoRA scales; each adds a ``nfe1corr*`` config to the grid."""
+
+
+def corr_config(gain: float) -> str:
+    """``nfe1corr`` config name for a LoRA scale (``nfe1corr040`` for 0.4).
+
+    Scale 1.0 keeps the historical plain ``nfe1corr`` name so MP4s from
+    earlier runs are still recognized and skipped.
+    """
+    if gain == 1.0:
+        return "nfe1corr"
+    return f"nfe1corr{gain:.2f}".replace(".", "")
+
+
+GRID: dict[str, tuple[bool, float | None]] = {
+    "base4": (False, None),
+    **{corr_config(g): (True, g) for g in GAINS},
+    "nfe1base": (True, None),
+}
+"""Config name -> ``(one_step, lora_scale)``; ``None`` scale means no LoRA."""
+
 CONFIGS = tuple(
-    c.strip()
-    for c in os.environ.get("CONFIGS", "base4,nfe1corr,nfe1base").split(",")
-    if c.strip()
+    c.strip() for c in os.environ.get("CONFIGS", ",".join(GRID)).split(",") if c.strip()
 )
-"""Subset of the config grid ``{base4, nfe1corr, nfe1base}`` to run."""
+"""Subset of the config grid (``base4``, ``nfe1corr*`` per gain, ``nfe1base``)."""
 
 OUT_DIR = Path(os.environ.get("OUT", str(_BASE / "outputs/eval_nfe1")))
 
 WARMUP_CHUNKS = 5
 """Chunks excluded from the latency mean (cache fill + first-chunk jitter)."""
-
-GRID: dict[str, tuple[bool, bool]] = {
-    "base4": (False, False),
-    "nfe1corr": (True, True),
-    "nfe1base": (True, False),
-}
-"""Config name -> ``(one_step, use_lora)``."""
 
 
 def build_pipeline_nfe1(seed: int | None = 42) -> LingbotWorldInferencePipeline:
@@ -116,12 +134,12 @@ def build_pipeline_nfe1(seed: int | None = 42) -> LingbotWorldInferencePipeline:
     return pipe.to("cuda")
 
 
-def attach_corrector(pipe: LingbotWorldInferencePipeline) -> None:
-    """Apply the r16 LoRA to the unwrapped DiT and load ``LORA`` at scale 1.0."""
+def attach_corrector(pipe: LingbotWorldInferencePipeline, scale: float) -> None:
+    """Apply the r16 LoRA to the unwrapped DiT and load ``LORA`` at ``scale``."""
     network = unwrap_compiled(pipe.diffusion_model.transformer.network)
     apply_lora(network, rank=16)
     load_lora(network, LORA)
-    set_lora_scale(network, 1.0)
+    set_lora_scale(network, scale)
 
 
 def timed_rollout(
@@ -199,7 +217,7 @@ def main() -> None:
     latency = json.loads(latency_path.read_text()) if latency_path.exists() else {}
 
     for config in CONFIGS:
-        one_step, use_lora = GRID[config]
+        one_step, lora_scale = GRID[config]
         cells = []
         for scene_idx in SCENES:
             for ti, (traj, grammar) in enumerate(EVAL_GRAMMARS):
@@ -218,8 +236,8 @@ def main() -> None:
         # checkpoint on every rollout (the train_v1.py pattern).
         pipe._ensure_oneshot_encoders_loaded()
         encoders = (pipe.text_encoder, pipe.image_encoder)
-        if use_lora:
-            attach_corrector(pipe)
+        if lora_scale is not None:
+            attach_corrector(pipe, scale=lora_scale)
 
         chunk_times: list[float] = []
         for scene_idx, ti, traj, grammar, name, mp4 in cells:
