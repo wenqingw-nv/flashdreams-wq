@@ -32,6 +32,7 @@ developer-guide flow, extended with a per-plugin runtime server.
 | --- | --- |
 | `lingbot-world-fast` | Lingbot World Fast streaming camera-control I2V (Wan VAE decoder, 4-step). |
 | `lingbot-world-fast-taehv-window15-sink3` | LightTAE decoder swap with `window_size_t=15` + `sink_size_t=3` for tighter interactive streaming. |
+| `lingbot-world-fast-1step` | 1-step fast preset (~2.2x chunk speedup at quality parity; measured drift unchanged vs 4-step). |
 | `lingbot-world-v2-14b-causal-fast` | LingBot-World v2 14B causal-fast using the shared LingBot pipeline (Wan VAE decoder, 4-step). |
 | `lingbot-world-v2-14b-causal-fast-taehv-window15-sink3` | v2 checkpoint with the same LightTAE/window/sink interactive preset. |
 
