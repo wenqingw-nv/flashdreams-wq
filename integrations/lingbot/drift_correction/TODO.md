@@ -75,3 +75,13 @@ SPDX-License-Identifier: Apache-2.0
   if full-window probes don't fit alongside owner jobs.
 - Which slug to ship on: v1 base slug first (docs' primary example); v2 = same pipeline, refresh
   recipe applies.
+
+## SHIP DECISION — owner eyeball 2026-08-07: DO-NOT-SHIP per-step corrector on this host
+
+90 s (120-chunk) sbs verdict: base does not visibly collapse (63-frame rolling window makes this
+host drift-resistant at practical horizons); corr050 preserves color/saturation but LOSES texture
+detail vs base at later frames — the cost exceeds the benefit the instruments credited (Δ-MUSIQ
+was tracking the saturation axis). Owner eyeball outranks instruments (7th overrule on record
+across hosts). The corrector, checkpoints, and recipe stay in-tree for refresh if a future
+checkpoint/base drifts harder; LingBot product value from this effort = the 1-NFE speed result
+(2.2x chunk speedup at quality parity, outputs/eval_nfe1/), decision on that thread pending.
